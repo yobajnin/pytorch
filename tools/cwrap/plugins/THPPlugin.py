@@ -19,6 +19,7 @@ class THPPlugin(CWrapPlugin):
 
         'THCudaTensor*': Template('((THCPFloatTensor*)$arg)->cdata'),
         'THCudaDoubleTensor*': Template('((THCPDoubleTensor*)$arg)->cdata'),
+        'THCudaIntTensor*': Template('((THCPIntTensor*)$arg)->cdata'),
         'THCudaLongTensor*': Template('((THCPLongTensor*)$arg)->cdata'),
 
         'THSFloatTensor*': Template('((THSPFloatTensor*)$arg)->cdata'),
@@ -56,6 +57,7 @@ class THPPlugin(CWrapPlugin):
 
         'THCudaTensor*': Template('(PyObject*)Py_TYPE($arg) == THCPFloatTensorClass'),
         'THCudaDoubleTensor*': Template('(PyObject*)Py_TYPE($arg) == THCPDoubleTensorClass'),
+        'THCudaIntTensor*': Template('(PyObject*)Py_TYPE($arg) == THCPIntTensorClass'),
         'THCudaLongTensor*': Template('(PyObject*)Py_TYPE($arg) == THCPLongTensorClass'),
 
         'THSDoubleTensor*': Template('(PyObject*)Py_TYPE($arg) == THSPDoubleTensorClass'),
@@ -86,8 +88,10 @@ class THPPlugin(CWrapPlugin):
     RETURN_WRAPPER = {
         'THTensor*': Template('return THPTensor_(New)($result);'),
         'THSTensor*': Template('return THSPTensor_(New)($result);'),
+        'THIndexTensor*': Template('return THPIndexTensor_(New)($result);'),
         'THLongTensor*': Template('return THPLongTensor_New($result);'),
         'THLongStorage*': Template('return THPLongStorage_New($result);'),
+        'THCudaIntTensor*': Template('return THCPIntTensor_New($result);'),
         'THCudaLongTensor*': Template('return THCPLongTensor_New($result);'),
         # TODO: make it smarter - it should return python long if result doesn't fit into an int
         'long': Template('return PyInt_FromLong($result);'),
@@ -123,7 +127,7 @@ PyObject * $name(PyObject *self, PyObject *args, PyObject *kwargs)
     """)
 
     ALLOCATE_TMPL = Template("""\
-THP${type}TensorPtr _${name}_guard = (THP${type}Tensor*) THP${type}Tensor_NewEmpty();
+THP${type}TensorPtr _${name}_guard((THP${type}Tensor*) THP${type}Tensor_NewEmpty());
 if (!_${name}_guard.get()) return NULL;
 THP${type}Tensor* $name = _${name}_guard.get();
 """)
@@ -174,6 +178,7 @@ ${cpu}
         'THDoubleTensor*': '" THPModuleStr "DoubleTensor',
         'THCudaTensor*': 'torch.cuda.FloatTensor',
         'THCudaDoubleTensor*': 'torch.cuda.DoubleTensor',
+        'THCudaIntTensor*': 'torch.cuda.IntTensor',
         'THCudaLongTensor*': 'torch.cuda.LongTensor',
         'THSize*': 'torch.Size',
         'THStride*': 'tuple',
@@ -187,6 +192,7 @@ ${cpu}
 
     OUT_INIT = """
     __out = kwargs ? PyDict_GetItemString(kwargs, "out") : NULL;
+    if (__out == Py_None) { __out = NULL; __dictcount--; __argcount--; }
     """
 
     def __init__(self):
@@ -353,6 +359,9 @@ ${cpu}
             for option in declaration['options']:
                 option['cname'] = 'TH{}Tensor_({})'.format(
                     'S' if option.get('sparse', False) else '', option['cname'])
+                if option.get('sparse', False):
+                    defined_if = option.get('defined_if', '')
+                    option['defined_if'] = '!IS_DISTRIBUTED' + (' && ' if defined_if else '') + defined_if
             if declaration.get('with_stateless', False) or declaration.get('only_stateless', False):
                 stateless_declaration = self.make_stateless(declaration)
                 new_declarations.append(stateless_declaration)
@@ -414,7 +423,7 @@ ${cpu}
             sparse=('' if not sparse else 'S'),
         )
         if sparse:
-            generated = '#ifndef TH_REAL_IS_HALF\n' + generated + '\n#endif\n\n'
+            generated = '#if !defined(TH_REAL_IS_HALF) && !IS_DISTRIBUTED\n' + generated + '\n#endif\n\n'
         return generated
 
     def process_full_file(self, code):
@@ -458,6 +467,17 @@ ${cpu}
             expected = str(int(option.get('output_provided', False)))
             code = '__dictcount == ' + expected + ' &&\n          ' + code
 
+        return code
+
+    def process_option_code(self, code, option):
+        if option.get('defined_if', ''):
+            defined_if = option['defined_if']
+            placeholder = ''
+            # This means that it's a first option, so we need a dummy if,
+            # so the next option can be an else if.
+            if 'else if' not in code:
+                placeholder = '\n    #else\n    if (false) {'
+            return '#if ' + defined_if + '\n          ' + code + placeholder + '\n    #endif\n'
         return code
 
     def process_pre_arg_assign(self, template, option):

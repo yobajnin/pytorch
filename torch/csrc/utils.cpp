@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <unordered_map>
 #include "THP.h"
+#include "torch/csrc/utils/python_strings.h"
 
 #include "generic/utils.cpp"
 #include <TH/THGenerateAllTypes.h>
@@ -36,7 +37,7 @@ bool THPUtils_tryUnpackLongs(PyObject *arg, THLongStoragePtr& result) {
   bool list = PyList_Check(arg);
   if (tuple || list) {
     int nDim = tuple ? PyTuple_GET_SIZE(arg) : PyList_GET_SIZE(arg);
-    THLongStoragePtr storage = THLongStorage_newWithSize(nDim);
+    THLongStoragePtr storage(THLongStorage_newWithSize(nDim));
     for (int i = 0; i != nDim; ++i) {
       PyObject* item = tuple ? PyTuple_GET_ITEM(arg, i) : PyList_GET_ITEM(arg, i);
       if (!THPUtils_checkLong(item)) {
@@ -44,7 +45,7 @@ bool THPUtils_tryUnpackLongs(PyObject *arg, THLongStoragePtr& result) {
       }
       storage->data[i] = THPUtils_unpackLong(item);
     }
-    result = storage.release();
+    result  = std::move(storage);
     return true;
   }
   return false;
@@ -135,14 +136,14 @@ static const char* classOrTypename(PyObject* obj) {
 PyObject * THPUtils_dispatchStateless(
     PyObject *tensor, const char *name, PyObject *args, PyObject *kwargs)
 {
-  THPObjectPtr methods = PyObject_GetAttrString(tensor, THP_STATELESS_ATTRIBUTE_NAME);
+  THPObjectPtr methods(PyObject_GetAttrString(tensor, THP_STATELESS_ATTRIBUTE_NAME));
   if (!methods) {
     return PyErr_Format(
         PyExc_TypeError,
         "Type %s doesn't implement stateless methods",
         classOrTypename(tensor));
   }
-  THPObjectPtr method = PyObject_GetAttrString(methods, name);
+  THPObjectPtr method(PyObject_GetAttrString(methods, name));
   if (!method) {
     return PyErr_Format(
         PyExc_TypeError,
@@ -153,33 +154,9 @@ PyObject * THPUtils_dispatchStateless(
   return PyObject_Call(method.get(), args, kwargs);
 }
 
-std::string _THPUtils_typename(PyObject *object)
+static inline std::string _THPUtils_typename(PyObject *object)
 {
-  std::string type_name = Py_TYPE(object)->tp_name;
-  std::string result;
-  if (type_name.find("Storage") != std::string::npos ||
-          type_name.find("Tensor") != std::string::npos) {
-    PyObject *module_name = PyObject_GetAttrString(object, "__module__");
-#if PY_MAJOR_VERSION == 2
-    if (module_name && PyString_Check(module_name)) {
-      result = PyString_AS_STRING(module_name);
-    }
-#else
-    if (module_name && PyUnicode_Check(module_name)) {
-      PyObject *module_name_bytes = PyUnicode_AsASCIIString(module_name);
-      if (module_name_bytes) {
-        result = PyBytes_AS_STRING(module_name_bytes);
-        Py_DECREF(module_name_bytes);
-      }
-    }
-#endif
-    Py_XDECREF(module_name);
-    result += ".";
-    result += type_name;
-  } else {
-    result = std::move(type_name);
-  }
-  return result;
+  return Py_TYPE(object)->tp_name;
 }
 
 
@@ -270,7 +247,8 @@ struct Option {
       arguments(), is_variadic(is_variadic), has_out(has_out) {};
   Option(const Option&) = delete;
   Option(Option&& other):
-    arguments(std::move(other.arguments)), is_variadic(other.is_variadic) {};
+    arguments(std::move(other.arguments)), is_variadic(other.is_variadic),
+    has_out(other.has_out) {};
 
   std::vector<Argument> arguments;
   bool is_variadic;
@@ -480,15 +458,6 @@ std::vector<std::string> _tryMatchKwargs(const Option& option,
   return unmatched;
 }
 
-std::string _parseDictKey(PyObject *key_str) {
-#if PY_MAJOR_VERSION == 3
-  THPObjectPtr ascii = PyUnicode_AsASCIIString(key_str);
-  return std::string(PyBytes_AS_STRING(ascii.get()));
-#else
-  return std::string(PyString_AS_STRING(key_str));
-#endif
-}
-
 void THPUtils_invalidArguments(PyObject *given_args, PyObject *given_kwargs,
         const char *function_name, size_t num_options, ...) {
   std::vector<std::string> option_strings;
@@ -516,7 +485,7 @@ void THPUtils_invalidArguments(PyObject *given_args, PyObject *given_kwargs,
     Py_ssize_t pos = 0;
 
     while (PyDict_Next(given_kwargs, &pos, &key, &value)) {
-      kwargs.emplace(_parseDictKey(key), value);
+      kwargs.emplace(THPUtils_unpackString(key), value);
     }
   }
 

@@ -92,7 +92,7 @@ class Module(object):
             raise TypeError("cannot assign '{}' object to parameter '{}' "
                             "(torch.nn.Parameter or None required)"
                             .format(torch.typename(param), name))
-        elif param.creator:
+        elif param.grad_fn:
             raise ValueError(
                 "Cannot assign non-leaf Variable to parameter '{0}'. Model "
                 "parameters must be created explicitly. To express '{0}' "
@@ -102,6 +102,10 @@ class Module(object):
             self._parameters[name] = param
 
     def add_module(self, name, module):
+        """Adds a child module to the current module.
+
+        The module can be accessed as an attribute using the given name.
+        """
         if hasattr(self, name):
             raise KeyError("attribute already exists '{}'".format(name))
         if not isinstance(module, Module) and module is not None:
@@ -206,15 +210,16 @@ class Module(object):
                 raise RuntimeError(
                     "forward hooks should never return any values, but '{}'"
                     "didn't return None".format(hook))
-        var = result
-        while not isinstance(var, Variable):
-            var = var[0]
-        creator = var.creator
-        if creator is not None and len(self._backward_hooks) > 0:
-            for hook in self._backward_hooks.values():
-                wrapper = functools.partial(hook, self)
-                functools.update_wrapper(wrapper, hook)
-                creator.register_hook(wrapper)
+        if len(self._backward_hooks) > 0:
+            var = result
+            while not isinstance(var, Variable):
+                var = var[0]
+            grad_fn = var.grad_fn
+            if grad_fn is not None:
+                for hook in self._backward_hooks.values():
+                    wrapper = functools.partial(hook, self)
+                    functools.update_wrapper(wrapper, hook)
+                    grad_fn.register_hook(wrapper)
         return result
 
     def __getattr__(self, name):
@@ -230,7 +235,8 @@ class Module(object):
             modules = self.__dict__['_modules']
             if name in modules:
                 return modules[name]
-        return object.__getattr__(self, name)
+        raise AttributeError("'{}' object has no attribute '{}'".format(
+            type(self).__name__, name))
 
     def __setattr__(self, name, value):
         def remove_from(*dicts):
@@ -333,7 +339,7 @@ class Module(object):
         if len(missing) > 0:
             raise KeyError('missing keys in state_dict: "{}"'.format(missing))
 
-    def parameters(self, memo=None):
+    def parameters(self):
         """Returns an iterator over module parameters.
 
         This is typically passed to an optimizer.
@@ -344,15 +350,28 @@ class Module(object):
             <class 'torch.FloatTensor'> (20L,)
             <class 'torch.FloatTensor'> (20L, 1L, 5L, 5L)
         """
+        for name, param in self.named_parameters():
+            yield param
+
+    def named_parameters(self, memo=None, prefix=''):
+        """Returns an iterator over module parameters, yielding both the
+        name of the parameter as well as the parameter itself
+
+        Example:
+            >>> for name, param in self.named_parameters():
+            >>>    if name in ['bias']:
+            >>>        print(param.size())
+        """
         if memo is None:
             memo = set()
-        for p in self._parameters.values():
+        for name, p in self._parameters.items():
             if p is not None and p not in memo:
                 memo.add(p)
-                yield p
-        for module in self.children():
-            for p in module.parameters(memo):
-                yield p
+                yield prefix + ('.' if prefix else '') + name, p
+        for mname, module in self.named_children():
+            submodule_prefix = prefix + ('.' if prefix else '') + mname
+            for name, p in module.named_parameters(memo, submodule_prefix):
+                yield name, p
 
     def children(self):
         """Returns an iterator over immediate children modules."""
@@ -444,7 +463,11 @@ class Module(object):
         """Sets gradients of all model parameters to zero."""
         for p in self.parameters():
             if p.grad is not None:
-                p.grad.data.zero_()
+                if p.grad.volatile:
+                    p.grad.data.zero_()
+                else:
+                    data = p.grad.data
+                    p.grad = Variable(data.new().resize_as_(data).zero_())
 
     def share_memory(self):
         return self._apply(lambda t: t.share_memory_())
@@ -457,3 +480,12 @@ class Module(object):
             tmpstr = tmpstr + '  (' + key + '): ' + modstr + '\n'
         tmpstr = tmpstr + ')'
         return tmpstr
+
+    def __dir__(self):
+        module_attrs = dir(self.__class__)
+        attrs = list(self.__dict__.keys())
+        parameters = list(self._parameters.keys())
+        modules = list(self._modules.keys())
+        buffers = list(self._buffers.keys())
+        keys = module_attrs + attrs + parameters + modules + buffers
+        return sorted(keys)

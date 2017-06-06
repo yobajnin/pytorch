@@ -1,6 +1,7 @@
 #include "Size.h"
 
 #include <string>
+#include "torch/csrc/utils/python_strings.h"
 #include "THP.h"
 
 PyObject* THPSizeClass = NULL;
@@ -24,7 +25,7 @@ PyObject * THPSize_New(int dim, long *sizes)
 
 static PyObject * THPSize_pynew(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 {
-  THPObjectPtr self = PyTuple_Type.tp_new(type, args, kwargs);
+  THPObjectPtr self(PyTuple_Type.tp_new(type, args, kwargs));
   if (self) {
     for (Py_ssize_t i = 0; i < PyTuple_Size(self); ++i) {
       PyObject *item = PyTuple_GET_ITEM(self.get(), i);
@@ -47,11 +48,7 @@ static PyObject * THPSize_repr(THPSize *self)
     repr += std::to_string(PyLong_AsLong(PyTuple_GET_ITEM(self, i)));
   }
   repr += "])";
-#if PY_MAJOR_VERSION == 2
-  return PyString_FromString(repr.c_str());
-#else
-  return PyUnicode_FromString(repr.c_str());
-#endif
+  return THPUtils_packString(repr);
 }
 
 extern PyTypeObject THPSizeType;
