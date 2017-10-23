@@ -1,12 +1,13 @@
 #ifndef THP_CUDNN_CONV_INC
 #define THP_CUDNN_CONV_INC
 
-#include <vector>
-#include <cudnn.h>
+#include "../Types.h"
 #include "THC/THC.h"
 
-#include "../Types.h"
 #include "Descriptors.h"
+
+#include "cudnn-wrapper.h"
+#include <vector>
 
 namespace torch { namespace cudnn {
 
@@ -42,28 +43,28 @@ struct Convolution
   Convolution(
       cudnnDataType_t dataType, THVoidTensor* input, THVoidTensor* weight,
       THVoidTensor* bias, THVoidTensor* output, std::vector<int> pad,
-      std::vector<int> stride, std::vector<int> dilation, int groups, bool transposed);
+      std::vector<int> stride, std::vector<int> dilation, int groups,
+      bool transposed);
 };
 
 void cudnn_convolution_forward(
     THCState* state, cudnnHandle_t handle, cudnnDataType_t dataType,
     THVoidTensor* input, THVoidTensor* weight, THVoidTensor* output,
-    Convolution* info, bool benchmark);
+    Convolution* info, bool benchmark, bool deterministic);
 
 void cudnn_convolution_add_bias(
     THCState* state, cudnnHandle_t handle, cudnnDataType_t dataType,
-    THVoidTensor* bias, THVoidTensor* output,
-    Convolution* info);
+    THVoidTensor* bias, THVoidTensor* output, Convolution* info);
 
 void cudnn_convolution_backward_data(
     THCState* state, cudnnHandle_t handle, cudnnDataType_t dataType,
     THVoidTensor* gradOutput, THVoidTensor* gradInput, THVoidTensor* weight,
-    Convolution* info, bool benchmark);
+    Convolution* info, bool benchmark, bool deterministic);
 
 void cudnn_convolution_backward_filter(
     THCState* state, cudnnHandle_t handle, cudnnDataType_t dataType,
     THVoidTensor* gradOutput, THVoidTensor* input, THVoidTensor* gradWeight,
-    Convolution* info, bool benchmark);
+    Convolution* info, bool benchmark, bool deterministic);
 
 void cudnn_convolution_backward_bias(
     THCState* state, cudnnHandle_t handle, cudnnDataType_t dataType,
@@ -73,13 +74,15 @@ void cudnn_convolution_backward_bias(
 // without reacquiring GIL in between.
 Convolution* cudnn_convolution_full_forward(
     THCState* state, cudnnHandle_t handle, cudnnDataType_t dataType,
-    THVoidTensor* input, THVoidTensor* weight, THVoidTensor* bias, THVoidTensor* output,
-    std::vector<int> pad, std::vector<int> stride, std::vector<int> dilation, int groups, bool benchmark);
+    THVoidTensor* input, THVoidTensor* weight, THVoidTensor* bias,
+    THVoidTensor* output, std::vector<int> pad, std::vector<int> stride,
+    std::vector<int> dilation, int groups, bool benchmark, bool deterministic);
 
 Convolution* cudnn_convolution_transpose_full_forward(
     THCState* state, cudnnHandle_t handle, cudnnDataType_t dataType,
-    THVoidTensor* input, THVoidTensor* weight, THVoidTensor* bias, THVoidTensor* output,
-    std::vector<int> pad, std::vector<int> stride, std::vector<int> dilation, int groups, bool benchmark);
+    THVoidTensor* input, THVoidTensor* weight, THVoidTensor* bias,
+    THVoidTensor* output, std::vector<int> pad, std::vector<int> stride,
+    std::vector<int> dilation, int groups, bool benchmark, bool deterministic);
 
 }}  // namespace torch::cudnn
 

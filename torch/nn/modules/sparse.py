@@ -1,7 +1,9 @@
 import torch
+from torch.autograd import Variable
 from torch.nn.parameter import Parameter
 
 from .module import Module
+from .. import functional as F
 
 
 class Embedding(Module):
@@ -19,6 +21,8 @@ class Embedding(Module):
         norm_type (float, optional): The p of the p-norm to compute for the max_norm option
         scale_grad_by_freq (boolean, optional): if given, this will scale gradients by the frequency of
                                                 the words in the mini-batch.
+        sparse (boolean, optional): if True, gradient w.r.t. weight matrix will be a sparse tensor. See Notes for
+                                    more details regarding sparse gradients.
 
     Attributes:
         weight (Tensor): the learnable weights of the module of shape (num_embeddings, embedding_dim)
@@ -26,6 +30,11 @@ class Embedding(Module):
     Shape:
         - Input: LongTensor `(N, W)`, N = mini-batch, W = number of indices to extract per mini-batch
         - Output: `(N, W, embedding_dim)`
+
+    Notes:
+        Keep in mind that only a limited number of optimizers support
+        sparse gradients: currently it's `optim.SGD` (`cuda` and `cpu`),
+        and `optim.Adagrad` (`cpu`)
 
     Examples::
 
@@ -88,10 +97,11 @@ class Embedding(Module):
         padding_idx = self.padding_idx
         if padding_idx is None:
             padding_idx = -1
-        return self._backend.Embedding(
+        return self._backend.Embedding.apply(
+            input, self.weight,
             padding_idx, self.max_norm, self.norm_type,
             self.scale_grad_by_freq, self.sparse
-        )(input, self.weight)
+        )
 
     def __repr__(self):
         s = '{name}({num_embeddings}, {embedding_dim}'
@@ -108,5 +118,102 @@ class Embedding(Module):
         s += ')'
         return s.format(name=self.__class__.__name__, **self.__dict__)
 
+
+class EmbeddingBag(Module):
+    r"""Computes sums or means of 'bags' of embeddings, without instantiating the
+    intermediate embeddings.
+
+    For bags of constant length,
+        * nn.EmbeddingBag with `mode=sum` is equivalent to nn.Embedding followed by `torch.sum(dim=1)`
+        * with `mode=mean` is equivalent to nn.Embedding followed by `torch.mean(dim=1)`
+
+    However, nn.EmbeddingBag is much more time and memory efficient than using a chain of these
+    operations.
+
+    Args:
+        num_embeddings (int): size of the dictionary of embeddings
+        embedding_dim (int): the size of each embedding vector
+        max_norm (float, optional): If given, will renormalize the embeddings to always have a norm lesser than this
+        norm_type (float, optional): The p of the p-norm to compute for the max_norm option
+        scale_grad_by_freq (boolean, optional): if given, this will scale gradients by the frequency of
+                                                the words in the dictionary.
+        mode (string, optional): 'sum' | 'mean'. Specifies the way to reduce the bag. Default: 'mean'
+
+    Attributes:
+        weight (Tensor): the learnable weights of the module of shape (num_embeddings, embedding_dim)
+
+    Inputs: input, offsets
+        - **input** (N or BxN): LongTensor containing the indices of the embeddings
+                                to extract. When `input` is 1D Tensor of shape `N`,
+                                an `offsets` Tensor is given, that contains the
+                                starting position of each new sequence in the
+                                mini-batch.
+        - **offsets** (B or None): LongTensor containing the starting positions of
+                                   each sample in a mini-batch of variable length
+                                   sequences. If `input` is 2D (BxN), then offsets
+                                   does not need to be given, as the `input` is
+                                   treated as a mini-batch of fixed length sequences
+                                   of length `N` each.
+
+
+    Shape:
+        - Input: LongTensor `N`, N = number of embeddings to extract
+                 (or) LongTensor `BxN`, B = number of sequences in mini-batch,
+                                        N = number of embeddings per sequence
+        - Offsets: LongTensor `B`, B = number of bags. The values are the
+                   offsets in `input` for each bag, i.e. the cumsum of lengths.
+                   Offsets is not given if Input is 2D `BxN` Tensor,
+                   the input is considered to be of fixed-length sequences
+        - Output: `(B, embedding_dim)`
+
+    Examples::
+
+        >>> # an Embedding module containing 10 tensors of size 3
+        >>> embedding_sum = nn.EmbeddingBag(10, 3, mode='sum')
+        >>> # a batch of 2 samples of 4 indices each
+        >>> input = Variable(torch.LongTensor([1,2,4,5,4,3,2,9]))
+        >>> offsets = Variable(torch.LongTensor([0,4]))
+        >>> embedding_sum(input, offsets)
+
+        Variable containing:
+        -0.7296 -4.6926  0.3295
+        -0.5186 -0.5631 -0.2792
+        [torch.FloatTensor of size 2x3]
+
+    """
+
+    def __init__(self, num_embeddings, embedding_dim,
+                 max_norm=None, norm_type=2, scale_grad_by_freq=False,
+                 mode='mean'):
+        super(EmbeddingBag, self).__init__()
+        self.num_embeddings = num_embeddings
+        self.embedding_dim = embedding_dim
+        self.max_norm = max_norm
+        self.norm_type = norm_type
+        self.scale_grad_by_freq = scale_grad_by_freq
+        self.weight = Parameter(torch.Tensor(num_embeddings, embedding_dim))
+        self.mode = mode
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        self.weight.data.normal_(0, 1)
+
+    def forward(self, input, offsets=None):
+        return F.embedding_bag(self.weight, input, offsets,
+                               self.max_norm, self.norm_type,
+                               self.scale_grad_by_freq, self.mode)
+
+    def __repr__(self):
+        s = '{name}({num_embeddings}, {embedding_dim}'
+        if self.max_norm is not None:
+            s += ', max_norm={max_norm}'
+        if self.norm_type != 2:
+            s += ', norm_type={norm_type}'
+        if self.scale_grad_by_freq is not False:
+            s += ', scale_grad_by_freq={scale_grad_by_freq}'
+        s += ', mode={mode}'
+        s += ')'
+        return s.format(name=self.__class__.__name__, **self.__dict__)
 
 # TODO: SparseLinear

@@ -8,13 +8,34 @@ from functools import wraps, reduce
 from contextlib import contextmanager
 
 import torch
+import torch.cuda
 import torch.distributed as dist
 from common import TestCase
 
 BACKEND = os.environ['BACKEND']
 TEMP_DIR = os.environ['TEMP_DIR']
+INIT_METHOD = os.getenv('INIT_METHOD', 'env://')
 MASTER_PORT = '29500'
-MASTER_ADDR = '127.0.0.1:' + MASTER_PORT
+MASTER_ADDR = '127.0.0.1'
+
+
+if not dist.is_available():
+    print('Distributed not available, skipping tests')
+    sys.exit(0)
+
+SKIP_IF_NO_CUDA_EXIT_CODE = 75
+
+
+def skip_if_no_cuda_distributed(func):
+    func.skip_if_no_cuda_distributed = True
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        if not torch.cuda.is_available():
+            sys.exit(SKIP_IF_NO_CUDA_EXIT_CODE)
+
+        return func(*args, **kwargs)
+    return wrapper
 
 
 @contextmanager
@@ -64,7 +85,7 @@ class Barrier(object):
                         data = f.read()
                         if int(data) >= cls.barrier_id:
                             arrived += 1
-            if arrived == dist.get_num_processes():
+            if arrived == dist.get_world_size():
                 break
 
             if time.time() - start_time > timeout:
@@ -87,7 +108,7 @@ class _DistTestBase(object):
         return (group, group_id, rank)
 
     def _init_global_test(self):
-        group = [i for i in range(0, dist.get_num_processes())]
+        group = [i for i in range(0, dist.get_world_size())]
         group_id = dist.group.WORLD
         rank = dist.get_rank()
         return (group, group_id, rank)
@@ -96,7 +117,7 @@ class _DistTestBase(object):
     def test_get_rank(self):
         test_dir = os.path.join(TEMP_DIR, 'test_dir')
         pid = str(os.getpid())
-        num_processes = dist.get_num_processes()
+        num_processes = dist.get_world_size()
         with open(os.path.join(test_dir, pid), 'w') as f:
             f.write(str(dist.get_rank()))
 
@@ -121,12 +142,12 @@ class _DistTestBase(object):
     def test_send_recv(self):
         rank = dist.get_rank()
         tensor = _build_tensor(rank + 1)
-        for dest in range(0, dist.get_num_processes()):
+        for dest in range(0, dist.get_world_size()):
             if dest == rank:
                 continue
             dist.send(tensor, dest)
 
-        for src in range(0, dist.get_num_processes()):
+        for src in range(0, dist.get_world_size()):
             if src == rank:
                 continue
             tensor = _build_tensor(src + 1, value=-1)
@@ -142,27 +163,28 @@ class _DistTestBase(object):
     def test_send_recv_any_source(self):
         rank = dist.get_rank()
         tensor = _build_tensor(10, rank)
-        for dest in range(0, dist.get_num_processes()):
+        for dest in range(0, dist.get_world_size()):
             if dest == rank:
                 continue
             dist.send(tensor, dest)
 
         recv_ranks = set()
-        for src in range(0, dist.get_num_processes()):
+        for src in range(0, dist.get_world_size()):
             if src == rank:
                 continue
             tensor = _build_tensor(10, value=-1)
-            dist.recv(tensor)
-            recv_ranks.add(tensor.resize_(1)[0])
+            sender = dist.recv(tensor)
+            self.assertTrue(tensor.eq(sender).all())
+            recv_ranks.add(sender)
 
-        self.assertEqual(len(recv_ranks), dist.get_num_processes() - 1)
+        self.assertEqual(len(recv_ranks), dist.get_world_size() - 1)
         self._barrier()
 
     # ISEND
     @unittest.skipIf(BACKEND == 'gloo', "Gloo does not support isend")
     def test_isend(self):
         rank = dist.get_rank()
-        world_size = dist.get_num_processes()
+        world_size = dist.get_world_size()
 
         if rank == 0:
             requests = [
@@ -182,7 +204,7 @@ class _DistTestBase(object):
     @unittest.skipIf(BACKEND == 'gloo', "Gloo does not support irecv")
     def test_irecv(self):
         rank = dist.get_rank()
-        world_size = dist.get_num_processes()
+        world_size = dist.get_world_size()
 
         if rank == 0:
             expected_tensors = [_build_tensor(src, -1) for src in range(1, world_size)]
@@ -222,6 +244,7 @@ class _DistTestBase(object):
         self._test_broadcast_helper(group, group_id, rank)
 
     @unittest.skipIf(BACKEND != 'gloo', "Only Gloo backend supports CUDA allReduce")
+    @skip_if_no_cuda_distributed
     def test_broadcast_cuda(self):
         group, group_id, rank = self._init_global_test()
         self._test_broadcast_helper(group, group_id, rank, True)
@@ -327,6 +350,7 @@ class _DistTestBase(object):
         )
 
     @unittest.skipIf(BACKEND != 'gloo', "Only Gloo backend supports CUDA allReduce")
+    @skip_if_no_cuda_distributed
     def test_all_reduce_sum_cuda(self):
         group, group_id, rank = self._init_global_test()
         self._test_all_reduce_helper(
@@ -382,13 +406,9 @@ class _DistTestBase(object):
         for dest in group:
             tensor = _build_tensor(dest + 1, -1)
             expected_tensor = _build_tensor(dest + 1, rank)
-            if rank == dest:
-                tensors = [_build_tensor(dest + 1, i) for i in group]
-                dist.scatter_send(tensors, tensor, group_id)
-                self.assertEqual(tensor, expected_tensor)
-            else:
-                dist.scatter_recv(tensor, dest, group_id)
-                self.assertEqual(tensor, expected_tensor)
+            tensors = [_build_tensor(dest + 1, i) for i in group] if rank == dest else []
+            dist.scatter(tensor, src=dest, scatter_list=tensors, group=group_id)
+            self.assertEqual(tensor, expected_tensor)
 
         self._barrier()
 
@@ -406,15 +426,12 @@ class _DistTestBase(object):
     def _test_gather_helper(self, group, group_id, rank):
         for dest in group:
             tensor = _build_tensor(dest + 1, rank)
+            tensors = [_build_tensor(dest + 1, -1) for i in group] if rank == dest else []
+            dist.gather(tensor, dst=dest, gather_list=tensors, group=group_id)
             if rank == dest:
-                tensors = [_build_tensor(dest + 1, -1) for i in group]
-                dist.gather_recv(tensors, tensor, group_id)
-
                 expected_tensors = [_build_tensor(dest + 1, i) for i in group]
                 for t1, t2 in zip(tensors, expected_tensors):
                     self.assertEqual(t1, t2)
-            else:
-                dist.gather_send(tensor, dest, group_id)
 
         self._barrier()
 
@@ -481,14 +498,14 @@ if BACKEND == 'tcp' or BACKEND == 'gloo':
     class TestTCPOrGloo(TestCase, _DistTestBase):
 
         MANAGER_PROCESS_RANK = -1
-        JOIN_TIMEOUT = 5
+        JOIN_TIMEOUT = 10
 
         @staticmethod
         def manager_join(fn):
             @wraps(fn)
             def wrapper(self):
                 if self.rank == self.MANAGER_PROCESS_RANK:
-                    self._join_and_reduce()
+                    self._join_and_reduce(fn)
                 else:
                     fn(self)
             return wrapper
@@ -524,19 +541,35 @@ if BACKEND == 'tcp' or BACKEND == 'gloo':
 
         def _run(self, rank):
             self.rank = rank
-            dist.init_process_group(backend=BACKEND)
+            try:
+                dist.init_process_group(init_method=INIT_METHOD, backend=BACKEND, world_size=int(WORLD_SIZE))
+            except RuntimeError as e:
+                if 'recompile' in e.args[0]:
+                    sys.exit(0)
             # self.id() == e.g. '__main__.TestDistributed.test_get_rank'
             # We're retreiving a corresponding test and executing it.
             getattr(self, self.id().split(".")[2])()
             sys.exit(0)
 
-        def _join_and_reduce(self):
+        def _join_and_reduce(self, fn):
+            skip_ok = getattr(fn, "skip_if_no_cuda_distributed", False)
             for p in self.processes:
                 p.join(self.JOIN_TIMEOUT)
-                self.assertEqual(p.exitcode, 0)
+                if not skip_ok:
+                    self.assertEqual(p.exitcode, 0)
+
+            if skip_ok:
+                first_process = self.processes[0]
+                # do this first so we don't give an error message about mismatched exit codes if the first isn't valid
+                assert first_process.exitcode == 0 or first_process.exitcode == SKIP_IF_NO_CUDA_EXIT_CODE
+
+                for p in self.processes:
+                    self.assertEqual(p.exitcode, first_process.exitcode)
+                if first_process.exitcode == SKIP_IF_NO_CUDA_EXIT_CODE:
+                    raise unittest.SkipTest("cuda is not available")
 
 elif BACKEND == 'mpi':
-    dist.init_process_group(backend='mpi')
+    dist.init_process_group(init_method=INIT_METHOD, backend='mpi')
 
     class TestMPI(TestCase, _DistTestBase):
         pass

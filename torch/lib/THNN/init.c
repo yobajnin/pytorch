@@ -179,6 +179,15 @@
 #include "generic/TemporalRowConvolution.c"
 #include "THGenerateFloatTypes.h"
 
+#include "generic/TemporalUpSamplingNearest.c"
+#include "THGenerateFloatTypes.h"
+
+#include "generic/TemporalUpSamplingLinear.c"
+#include "THGenerateFloatTypes.h"
+
+#include "generic/FeatureLPPooling.c"
+#include "THGenerateFloatTypes.h"
+
 #include "generic/BatchNormalization.c"
 #include "THGenerateFloatTypes.h"
 
@@ -192,6 +201,9 @@
 #include "THGenerateFloatTypes.h"
 
 #include "generic/SpatialConvolutionLocal.c"
+#include "THGenerateFloatTypes.h"
+
+#include "generic/SpatialFullDilatedConvolution.c"
 #include "THGenerateFloatTypes.h"
 
 #include "generic/SpatialFullConvolution.c"
@@ -233,6 +245,9 @@
 #include "generic/SpatialUpSamplingBilinear.c"
 #include "THGenerateFloatTypes.h"
 
+#include "generic/SpatialGridSamplerBilinear.c"
+#include "THGenerateFloatTypes.h"
+
 #include "generic/VolumetricAveragePooling.c"
 #include "THGenerateFloatTypes.h"
 
@@ -242,10 +257,19 @@
 #include "generic/VolumetricConvolutionMM.c"
 #include "THGenerateFloatTypes.h"
 
+#include "generic/VolumetricFullDilatedConvolution.c"
+#include "THGenerateFloatTypes.h"
+
 #include "generic/VolumetricFullConvolution.c"
 #include "THGenerateFloatTypes.h"
 
 #include "generic/VolumetricDilatedConvolution.c"
+#include "THGenerateFloatTypes.h"
+
+#include "generic/VolumetricAdaptiveMaxPooling.c"
+#include "THGenerateFloatTypes.h"
+
+#include "generic/VolumetricAdaptiveAveragePooling.c"
 #include "THGenerateFloatTypes.h"
 
 #include "generic/VolumetricMaxPooling.c"
@@ -266,5 +290,17 @@
 #include "generic/SpatialReplicationPadding.c"
 #include "THGenerateFloatTypes.h"
 
+#include "generic/TemporalReflectionPadding.c"
+#include "THGenerateFloatTypes.h"
+
+#include "generic/TemporalReplicationPadding.c"
+#include "THGenerateFloatTypes.h"
+
 #include "generic/VolumetricReplicationPadding.c"
+#include "THGenerateFloatTypes.h"
+
+#include "generic/VolumetricUpSamplingNearest.c"
+#include "THGenerateFloatTypes.h"
+
+#include "generic/VolumetricUpSamplingTrilinear.c"
 #include "THGenerateFloatTypes.h"

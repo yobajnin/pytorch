@@ -32,8 +32,8 @@
 
 #define __TH_TENSOR_APPLYX_PREAMBLE(TYPE, TENSOR, DIM, ALLOW_CONTIGUOUS) \
   TYPE *TENSOR##_data = NULL; \
-  long *TENSOR##_counter = NULL, *TENSOR##_sizes = NULL, *TENSOR##_strides = NULL, *TENSOR##_dimOffset = NULL; \
-  long TENSOR##_stride = 0, TENSOR##_size = 0, TENSOR##_dim = 0, TENSOR##_i, TENSOR##_n; \
+  int64_t *TENSOR##_counter = NULL, *TENSOR##_sizes = NULL, *TENSOR##_strides = NULL, *TENSOR##_dimOffset = NULL; \
+  int64_t TENSOR##_stride = 0, TENSOR##_size = 0, TENSOR##_dim = 0, TENSOR##_i, TENSOR##_n; \
   int TENSOR##_contiguous = ALLOW_CONTIGUOUS && DIM < 0; \
   TENSOR##_n = (TENSOR->nDimension ? 1 : 0); \
   for(TENSOR##_i = 0; TENSOR##_i < TENSOR->nDimension; TENSOR##_i++) \
@@ -65,7 +65,7 @@
           TENSOR##_dim++; \
       } \
       /* Allocate an array of 3*dim elements, where dim is the number of contiguous sections */ \
-      TENSOR##_counter = (long*)THAlloc(sizeof(long)*(3*TENSOR##_dim)); \
+      TENSOR##_counter = (int64_t*)THAlloc(sizeof(int64_t)*(3*TENSOR##_dim)); \
       TENSOR##_sizes = TENSOR##_counter + TENSOR##_dim; \
       TENSOR##_strides = TENSOR##_counter + 2*TENSOR##_dim; \
       TH_TENSOR_dim_index = TENSOR##_dim-1; \
@@ -137,14 +137,28 @@
 #define TH_TENSOR_APPLY3_D(TYPE1, TENSOR1, TYPE2, TENSOR2, TYPE3, TENSOR3, DIM, CODE) \
 { \
   int TH_TENSOR_APPLY_hasFinished = 0; \
-  long TH_TENSOR_dim_index = 0; \
+  int64_t TH_TENSOR_dim_index = 0; \
   __TH_TENSOR_APPLYX_PREAMBLE(TYPE1, TENSOR1, DIM, 1) \
   __TH_TENSOR_APPLYX_PREAMBLE(TYPE2, TENSOR2, DIM, 1) \
   __TH_TENSOR_APPLYX_PREAMBLE(TYPE3, TENSOR3, DIM, 1) \
-\
-  if(TENSOR1##_n != TENSOR2##_n || TENSOR1##_n != TENSOR3##_n) /* should we do the check in the function instead? i think so */ \
-    THError("inconsistent tensor size"); \
-\
+                                                                        \
+  int elements_equal = 1;                                               \
+  if(TENSOR1##_n != TENSOR2##_n) {                                      \
+    elements_equal = 0;                                                 \
+  }                                                                     \
+  else if(TENSOR1##_n != TENSOR3##_n) {                                 \
+    elements_equal = 0;                                                 \
+  }                                                                     \
+  if (elements_equal == 0) {                                            \
+    THDescBuff T1buff = _THSizeDesc(TENSOR1->size, TENSOR1->nDimension); \
+    THDescBuff T2buff = _THSizeDesc(TENSOR2->size, TENSOR2->nDimension); \
+    THDescBuff T3buff = _THSizeDesc(TENSOR3->size, TENSOR3->nDimension); \
+    THError("inconsistent tensor size, expected %s %s, %s %s and %s %s to have the same " \
+            "number of elements, but got %d, %d and %d elements respectively", \
+            #TENSOR1, T1buff.str, #TENSOR2, T2buff.str, #TENSOR3, T3buff.str, \
+            TENSOR1##_n, TENSOR2##_n, TENSOR3##_n);                     \
+  }                                                                     \
+                                                                        \
   while(!TH_TENSOR_APPLY_hasFinished) \
   { \
     /* Loop through the inner most region of the Tensor */ \
@@ -170,13 +184,17 @@
 #define TH_TENSOR_APPLY2_D(TYPE1, TENSOR1, TYPE2, TENSOR2, DIM, CODE) \
 { \
   int TH_TENSOR_APPLY_hasFinished = 0; \
-  long TH_TENSOR_dim_index = 0; \
+  int64_t TH_TENSOR_dim_index = 0; \
   __TH_TENSOR_APPLYX_PREAMBLE(TYPE1, TENSOR1, DIM, 1) \
   __TH_TENSOR_APPLYX_PREAMBLE(TYPE2, TENSOR2, DIM, 1) \
 \
-  if(TENSOR1##_n != TENSOR2##_n) /* should we do the check in the function instead? i think so */ \
-    THError("inconsistent tensor size"); \
-\
+    if(TENSOR1##_n != TENSOR2##_n) {                                    \
+      THDescBuff T1buff = _THSizeDesc(TENSOR1->size, TENSOR1->nDimension); \
+      THDescBuff T2buff = _THSizeDesc(TENSOR2->size, TENSOR2->nDimension); \
+      THError("inconsistent tensor size, expected %s %s and %s %s to have the same " \
+              "number of elements, but got %d and %d elements respectively", \
+              #TENSOR1, T1buff.str, #TENSOR2, T2buff.str, TENSOR1##_n, TENSOR2##_n); \
+    }                                                                   \
   while(!TH_TENSOR_APPLY_hasFinished) \
   { \
     /* Loop through the inner most region of the Tensor */ \
@@ -199,7 +217,7 @@
 #define TH_TENSOR_APPLY_D(TYPE, TENSOR, DIM, CODE) \
 { \
   int TH_TENSOR_APPLY_hasFinished = 0; \
-  long TH_TENSOR_dim_index = 0; \
+  int64_t TH_TENSOR_dim_index = 0; \
   __TH_TENSOR_APPLYX_PREAMBLE(TYPE, TENSOR, DIM, 0) \
 \
   while(!TH_TENSOR_APPLY_hasFinished) \

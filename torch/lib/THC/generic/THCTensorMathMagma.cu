@@ -8,8 +8,8 @@
 
 static void THCTensor_(copyArray1d)(THCState *state, THCTensor *self, real *src, int k)
 {
-  long size[1] = { k };
-  long stride[1] = { 1 };
+  int64_t size[1] = { k };
+  int64_t stride[1] = { 1 };
   THCTensor_(resizeNd)(state, self, 1, size, stride);
   size_t len = k * sizeof(real);
   THCudaCheck(cudaMemcpy(self->storage->data + self->storageOffset, src, len, cudaMemcpyHostToDevice));
@@ -17,8 +17,8 @@ static void THCTensor_(copyArray1d)(THCState *state, THCTensor *self, real *src,
 
 static void THCTensor_(copyArray2d)(THCState *state, THCTensor *self, real *src, int m, int n)
 {
-  long size[2] = { m, n };
-  long stride[2] = { 1, m };
+  int64_t size[2] = { m, n };
+  int64_t stride[2] = { 1, m };
   THCTensor_(resizeNd)(state, self, 2, size, stride);
   size_t len = m * n * sizeof(real);
   THCudaCheck(cudaMemcpy(self->storage->data + self->storageOffset, src, len, cudaMemcpyHostToDevice));
@@ -51,8 +51,8 @@ static THCTensor* THCTensor_(newColumnMajor)(THCState *state, THCTensor *self, T
   else
     THCTensor_(retain)(state, self);
 
-  long size[2] = { src->size[0], src->size[1] };
-  long stride[2] = { 1, src->size[0] };
+  int64_t size[2] = { src->size[0], src->size[1] };
+  int64_t stride[2] = { 1, src->size[0] };
 
   THCTensor_(resizeNd)(state, self, 2, size, stride);
   THCTensor_(copy)(state, self, src);
@@ -347,10 +347,10 @@ THC_API void THCTensor_(gesvd2)(THCState *state, THCTensor *ru_, THCTensor *rs_,
 
 THC_API void THCTensor_(getri)(THCState *state, THCTensor *ra_, THCTensor *a)
 {
-#ifdef USE_MAGMA
   THArgCheck(a->nDimension == 2, 2, "A should be 2 dimensional");
   THArgCheck(a->size[0] == a->size[1], 2, "A should be square");
 
+#ifdef USE_MAGMA
   int info;
   int n = a->size[0];
   int lwork = n * magma_get_sgetri_nb(n);
@@ -391,37 +391,23 @@ THC_API void THCTensor_(getri)(THCState *state, THCTensor *ra_, THCTensor *a)
   magma_free_pinned(ipiv);
   THCTensor_(freeCopyTo)(state, input, ra_);
 #else
-  THArgCheck(a->nDimension == 2, 2, "A should be 2 dimensional");
-  THArgCheck(a->size[0] == a->size[1], 2, "A should be square");
-
   int n = a->size[0];
 
   // input
-  THCTensor *input = THCTensor_(newColumnMajor)(state, ra_, a);
-  // output
-  THCTensor *output = THCTensor_(newColumnMajor)(state, ra_, a);
+  THCTensor *input = THCTensor_(newColumnMajor)(state, a, a);
+  THCTensor_(resizeNd)(state, ra_, 2, input->size, input->stride);
 
-  size_t matrices_size = sizeof(real*);
-
-  real **matrices1 = (real **)THAlloc(matrices_size);
-  const real **matrices1_const = (const real **)THAlloc(matrices_size);
-  real **matrices2 = (real **)THAlloc(matrices_size);
-  matrices1[0] = THCTensor_(data)(state, input);
-  matrices1_const[0] = THCTensor_(data)(state, input);
-  matrices2[0] = THCTensor_(data)(state, output);
+  real *matrices1[1] = { THCTensor_(data)(state, input) };
+  real *matrices2[1] = { THCTensor_(data)(state, ra_) };
 
   // Copy pointers to device.
   real **d_matrices1, **d_matrices2;
-  const real **d_matrices1_const;
-  THCudaCheck(THCudaMalloc(state, (void**)&d_matrices1, matrices_size));
-  THCudaCheck(THCudaMalloc(state, (void**)&d_matrices1_const, matrices_size));
-  THCudaCheck(THCudaMalloc(state, (void**)&d_matrices2, matrices_size));
+  THCudaCheck(THCudaMalloc(state, (void**)&d_matrices1, sizeof(real*)));
+  THCudaCheck(THCudaMalloc(state, (void**)&d_matrices2, sizeof(real*)));
 
-  THCudaCheck(cudaMemcpyAsync(d_matrices1, matrices1, matrices_size,
+  THCudaCheck(cudaMemcpyAsync(d_matrices1, matrices1, sizeof(real*),
                               cudaMemcpyHostToDevice, THCState_getCurrentStream(state)));
-  THCudaCheck(cudaMemcpyAsync(d_matrices1_const, matrices1_const, matrices_size,
-                              cudaMemcpyHostToDevice, THCState_getCurrentStream(state)));
-  THCudaCheck(cudaMemcpyAsync(d_matrices2, matrices2, matrices_size,
+  THCudaCheck(cudaMemcpyAsync(d_matrices2, matrices2, sizeof(real*),
                               cudaMemcpyHostToDevice, THCState_getCurrentStream(state)));
   int info;
   int *info_gpu;
@@ -446,10 +432,12 @@ THC_API void THCTensor_(getri)(THCState *state, THCTensor *ra_, THCTensor *a)
 
   // Inverse
 #if defined(THC_REAL_IS_FLOAT)
-  THCudaBlas_Sgetri(state, n, d_matrices1_const, n, ipiv_gpu, d_matrices2, n, info_gpu, 1);
+  THCudaBlas_Sgetri(state, n, (const real**)d_matrices1, n, ipiv_gpu, d_matrices2, n, info_gpu, 1);
 #else
-  THCudaBlas_Dgetri(state, n, d_matrices1_const, n, ipiv_gpu, d_matrices2, n, info_gpu, 1);
+  THCudaBlas_Dgetri(state, n, (const real**)d_matrices1, n, ipiv_gpu, d_matrices2, n, info_gpu, 1);
 #endif
+
+  THCudaCheck(cudaMemcpy(&info, info_gpu, sizeof(int), cudaMemcpyDeviceToHost));
 
   if (info > 0)
     THError("CUBLAS getri : U(%d,%d) is 0, U is singular", info, info);
@@ -460,10 +448,9 @@ THC_API void THCTensor_(getri)(THCState *state, THCTensor *ra_, THCTensor *a)
   THCudaCheck(THCudaFree(state, info_gpu));
 
   THCudaCheck(THCudaFree(state, d_matrices1));
-  THCudaCheck(THCudaFree(state, d_matrices1_const));
   THCudaCheck(THCudaFree(state, d_matrices2));
 
-  THCTensor_(freeCopyTo)(state, output, input);
+  THCTensor_(free)(state, input);
 #endif
 }
 
@@ -664,6 +651,7 @@ THC_API void THCTensor_(qr)(THCState *state, THCTensor *rq_, THCTensor *rr_, THC
   if (info != 0)
     THError("MAGMA orgqr : Argument %d : illegal value.", -info);
 
+  THCTensor_(free)(state, a);
   THCTensor_(free)(state, work);
   magma_free_pinned(tau_data);
 

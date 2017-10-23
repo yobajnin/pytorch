@@ -12,6 +12,7 @@ torch/lib/build
 torch/lib/tmp_install
 torch/lib/include
 torch/lib/torch_shm_manager
+torch/csrc/autograd/generated/*
 torch/csrc/cudnn/cuDNN.cpp
 torch/csrc/nn/THNN.cwrap
 torch/csrc/nn/THNN.cpp
@@ -35,6 +36,7 @@ test/.coverage
 */**/*.so*
 */**/*.dylib*
 test/data/legacy_serialized.pt
+test/data/linear.pt
 
 # IPython notebook checkpoints
 .ipynb_checkpoints

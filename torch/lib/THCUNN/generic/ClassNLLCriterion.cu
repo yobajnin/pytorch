@@ -9,9 +9,11 @@ void THNN_(ClassNLLCriterion_updateOutput)(
            THCTensor *output,
            bool sizeAverage,
            THCTensor *weights,
-           THCTensor *total_weight) {
-  THCUNN_check_dim_size(state, output, 1, 0, 1);
-  THCUNN_check_dim_size(state, total_weight, 1, 0, 1);
+           THCTensor *total_weight,
+           int64_t ignore_index) {
+  THCTensor_(resize1d)(state, output, 1);
+  THCTensor_(resize1d)(state, total_weight, 1);
+  ignore_index -= TH_INDEX_BASE;
 
   if (THCIndexTensor_(nDimension)(state, target) > 1) {
     THError("multi-target not supported");
@@ -32,8 +34,8 @@ void THNN_(ClassNLLCriterion_updateOutput)(
 
   THArgCheck(n_dims <= 2 && n_dims > 0, 2, "vector or matrix expected");
 
-  long batch_size = n_dims == 1 ? 1 : THCTensor_(size)(state, input, 0);
-  long num_targets = THCudaLongTensor_size(state, target, 0);
+  int64_t batch_size = n_dims == 1 ? 1 : THCTensor_(size)(state, input, 0);
+  int64_t num_targets = THCudaLongTensor_size(state, target, 0);
   THArgCheck(batch_size == num_targets,
       2, "mismatch between the batch size of input (%ld) and that of target (%ld)",
       batch_size, num_targets);
@@ -63,7 +65,8 @@ void THNN_(ClassNLLCriterion_updateOutput)(
         target_data,
         weights_data,
         sizeAverage,
-        n_classes
+        n_classes,
+        ignore_index
     );
 
   } else if (THCTensor_(nDimension)(state, input) == 2) {
@@ -77,7 +80,8 @@ void THNN_(ClassNLLCriterion_updateOutput)(
         sizeAverage,
         THCTensor_(size)(state, input, 0),
         THCTensor_(size)(state, input, 1),
-        n_classes
+        n_classes,
+        ignore_index
     );
   }
   THCudaCheck(cudaGetLastError());
@@ -96,14 +100,18 @@ void THNN_(ClassNLLCriterion_updateGradInput)(
            THCTensor *gradInput,
            bool sizeAverage,
            THCTensor *weights,
-           THCTensor *total_weight) {
+           THCTensor *total_weight,
+           int64_t ignore_index) {
   if (THCIndexTensor_(nDimension)(state, target) > 1) {
     THError("multi-target not supported");
   }
+  ignore_index -= TH_INDEX_BASE;
 
   int n_dims = THCTensor_(nDimension)(state, input);
   int n_classes = THCTensor_(size)(state, input, n_dims - 1);
 
+  THCTensor_(resizeAs)(state, gradInput, input);
+  THCTensor_(zero)(state, gradInput);
   THArgCheck(THCTensor_(isContiguous)(state, gradInput), 4, "gradInput must be contiguous");
 
   if (weights) {
@@ -119,8 +127,8 @@ void THNN_(ClassNLLCriterion_updateGradInput)(
 
   THArgCheck(n_dims <= 2 && n_dims > 0, 2, "vector or matrix expected");
 
-  long batch_size = n_dims == 1 ? 1 : THCTensor_(size)(state, input, 0);
-  long num_targets = THCudaLongTensor_size(state, target, 0);
+  int64_t batch_size = n_dims == 1 ? 1 : THCTensor_(size)(state, input, 0);
+  int64_t num_targets = THCudaLongTensor_size(state, target, 0);
   THArgCheck(batch_size == num_targets,
       2, "mismatch between the batch size of input (%ld) and that of target (%ld)",
       batch_size, num_targets);
@@ -145,7 +153,8 @@ void THNN_(ClassNLLCriterion_updateGradInput)(
         target_data,
         total_weight_data,
         sizeAverage,
-        n_classes
+        n_classes,
+        ignore_index
     );
   } else {
     cunn_ClassNLLCriterion_updateGradInput_kernel<real>
@@ -157,7 +166,8 @@ void THNN_(ClassNLLCriterion_updateGradInput)(
         sizeAverage,
         THCTensor_(size)(state, input, 0),
         THCTensor_(size)(state, input, 1),
-        n_classes
+        n_classes,
+        ignore_index
     );
   }
   THCudaCheck(cudaGetLastError());

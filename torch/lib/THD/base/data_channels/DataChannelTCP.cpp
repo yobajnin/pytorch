@@ -67,8 +67,8 @@ DataChannelTCP::DataChannelTCP(InitMethod::Config config, int timeout)
   : _socket(-1)
   , _port(0)
   , _timeout(timeout)
-  , _poll_events(nullptr)
   , _processes(config.world_size)
+  , _poll_events(nullptr)
 {
   _rank = config.rank;
 
@@ -277,7 +277,7 @@ void DataChannelTCP::allGather(std::vector<thpp::Tensor*>& output,
 
   auto j = group_rank, jnext = left;
   for (rank_type i = 0; i < group.size(); ++i) {
-    auto send_request = isend(*(output[j]), group.mustGetGlobalRank(right));
+    req_ptr send_request {isend(*(output[j]), group.mustGetGlobalRank(right))};
     receive(*(output[jnext]), group.mustGetGlobalRank(left));
     send_request->wait();
 
@@ -409,7 +409,7 @@ void DataChannelTCP::allReduce(thpp::Tensor& data, THDReduceOp operation,
       int dst = (newdst < rem) ? (newdst * 2 + 1) : (newdst + rem);
 
       auto dst_global_rank = group.mustGetGlobalRank(dst);
-      auto send_request = isend(data, dst_global_rank);
+      req_ptr send_request {isend(data, dst_global_rank)};
       receive(*tmp_tensor, dst_global_rank);
       send_request->wait();
 
@@ -454,7 +454,7 @@ void DataChannelTCP::reduce(thpp::Tensor& data, THDReduceOp operation,
   auto group_dst_rank = group.mustGetGroupRank(dst_rank);
   int dim = log2ceil(group.size());
   rank_type virtual_rank = (group_rank + group.size() - group_dst_rank) % group.size();
-  long long mask = 0;
+  int64_t mask = 0;
   auto result_tensor = std::unique_ptr<thpp::Tensor>(data.clone());
 
   for (int k = 0; k <= dim - 1; mask ^= (1 << k), ++k) {
@@ -503,7 +503,7 @@ void DataChannelTCP::broadcast(thpp::Tensor& data, rank_type src_rank,
   auto group_src_rank = group.mustGetGroupRank(src_rank);
   int dim = log2ceil(group.size());
   rank_type virtual_rank = (group_rank + group.size() - group_src_rank) % group.size();
-  long long mask = (1 << dim) - 1;
+  int64_t mask = (1 << dim) - 1;
 
   for (int k = dim - 1; k >= 0; --k) {
     mask ^= (1 << k); // clear bit `k`
@@ -523,7 +523,7 @@ void DataChannelTCP::broadcast(thpp::Tensor& data, rank_type src_rank,
 }
 
 
-void DataChannelTCP::send(const Scalar& data, rank_type dst_rank) {
+void DataChannelTCP::send(Scalar& data, rank_type dst_rank) {
   auto request = _send_worker.push([this, &data, dst_rank]{
     this->_send(data, dst_rank);
   });
@@ -547,8 +547,9 @@ void DataChannelTCP::receive(Scalar& data, rank_type src_rank) {
 }
 
 
-void DataChannelTCP::receive(thpp::Tensor& data) {
-  auto request = _receive_worker.push([this, &data]{
+rank_type DataChannelTCP::receive(thpp::Tensor& data) {
+  rank_type sender;
+  auto request = _receive_worker.push([this, &data, &sender]{
     if (!this->_poll_events) {
       // cache poll events array, it will be reused in another `receive` calls
       this->_poll_events.reset(new struct pollfd[this->_processes.size()]);
@@ -574,11 +575,13 @@ void DataChannelTCP::receive(thpp::Tensor& data) {
         throw std::system_error(ECONNABORTED, std::system_category());
 
       this->_receive(data, rank);
+      sender = rank;
       break;
     }
   });
 
   request.wait();
+  return sender;
 }
 
 

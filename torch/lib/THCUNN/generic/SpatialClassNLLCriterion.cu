@@ -36,9 +36,12 @@ void THNN_(SpatialClassNLLCriterion_updateOutput)(
            THCTensor *output,
            bool sizeAverage,
            THCTensor *weights,
-           THCTensor *total_weight)
+           THCTensor *total_weight,
+           int64_t ignore_index)
 {
   THNN_(SpatialClassNLLCriterion_shapeCheck)(state, input, target, weights);
+  THCTensor_(resize1d)(state, output, 1);
+  THCTensor_(resize1d)(state, total_weight, 1);
 
   if (weights)
     THCUNN_assertSameGPU(state, 5, input, target, weights, output, total_weight);
@@ -75,7 +78,8 @@ void THNN_(SpatialClassNLLCriterion_updateOutput)(
       THCTensor_(size)(state, input, 0),
       THCTensor_(size)(state, input, 1),
       THCTensor_(size)(state, input, 2) * THCTensor_(size)(state, input, 3),
-      blocks_per_sample
+      blocks_per_sample,
+      ignore_index
   );
   THCudaCheck(cudaGetLastError());
   if (sizeAverage) {
@@ -98,9 +102,12 @@ void THNN_(SpatialClassNLLCriterion_updateGradInput)(
            THCTensor *gradInput,
            bool sizeAverage,
            THCTensor *weights,
-           THCTensor *total_weight)
+           THCTensor *total_weight,
+           int64_t ignore_index)
 {
   THNN_(SpatialClassNLLCriterion_shapeCheck)(state, input, target, weights);
+  THCTensor_(resizeAs)(state, gradInput, input);
+  THCTensor_(zero)(state, gradInput);
   THArgCheck(THCTensor_(isContiguous)(state, gradInput), 4,
              "gradInput must be contiguous");
 
@@ -134,7 +141,8 @@ void THNN_(SpatialClassNLLCriterion_updateGradInput)(
       THCTensor_(size)(state, input, 0),
       THCTensor_(size)(state, input, 1),
       THCTensor_(size)(state, input, 2) *THCTensor_(size)(state, input, 3),
-      blocks_per_sample
+      blocks_per_sample,
+      ignore_index
   );
   THCudaCheck(cudaGetLastError());
 

@@ -94,7 +94,7 @@ def small_3d_positive(t):
 
 
 def small_3d_unique(t):
-    return t(S, S, S).copy_(torch.arange(1, S * S * S + 1))
+    return t(S, S, S).copy_(torch.arange(1, S * S * S + 1).view(S, S, S))
 
 
 def small_1d_lapack(t):
@@ -133,6 +133,11 @@ tests = [
     ('div', small_3d, lambda t: [number(3.14, 3, t)],),
     ('div', small_3d, lambda t: [small_3d_positive(t)], 'tensor'),
     ('pow', small_3d, lambda t: [number(3.14, 3, t)], None, float_types),
+    ('pow', small_3d, lambda t: [number(1., 1, t)], 'pow1', float_types),
+    ('pow', small_3d, lambda t: [number(2., 2, t)], 'pow2', float_types),
+    ('pow', small_3d, lambda t: [number(3., 3, t)], 'pow3', float_types),
+    ('pow', small_3d, lambda t: [number(-1., -1, t)], 'pow-1', float_types),
+    ('pow', small_3d, lambda t: [number(-2., -2, t)], 'pow-2', float_types),
     ('pow', small_3d, lambda t: [small_3d(t).abs_()], 'tensor', float_types),
     ('addbmm', small_2d, lambda t: [small_3d(t), small_3d(t)], None, float_types),
     ('addbmm', small_2d, lambda t: [number(0.4, 2, t), small_3d(t), small_3d(t)], 'scalar'),
@@ -277,6 +282,7 @@ tests = [
     ('view_as', small_3d, lambda t: [t(100, 10)],),
     ('zero', small_3d, lambda t: [],),
     ('zeros', small_3d, lambda t: [1, 2, 3, 4],),
+    ('eye', small_2d, lambda t: [3, 4],),
     ('rsqrt', lambda t: small_3d(t) + 1, lambda t: [], None, float_types),
     ('sinh', lambda t: small_3d(t).clamp(-1, 1), lambda t: [], None, float_types),
     ('tan', lambda t: small_3d(t).clamp(-1, 1), lambda t: [], None, float_types),
@@ -285,6 +291,7 @@ tests = [
     ('qr', small_2d_lapack_skinny, lambda t: [], 'skinny', float_types),
     ('qr', small_2d_lapack_fat, lambda t: [], 'fat', float_types),
     ('qr', large_2d_lapack, lambda t: [], 'big', float_types),
+    ('inverse', new_t(20, 20), lambda t: [], None, float_types),
 
 ]
 
@@ -299,7 +306,7 @@ custom_precision = {
     'baddbmm': 1e-4,
     'rsqrt': 1e-4,
     'cumprod': 1e-4,
-    'qr': 1e-4,
+    'qr': 3e-4,
 }
 
 simple_pointwise = [
@@ -321,6 +328,8 @@ simple_pointwise_float = [
     'atan',
     'cos',
     'cosh',
+    'erf',
+    'erfinv',
     'exp',
     'reciprocal',
     'floor',
@@ -453,6 +462,9 @@ class TestCuda(TestCase):
     def test_type_conversions_same_gpu(self):
         x = torch.randn(5, 5).cuda(1)
         self.assertEqual(x.int().get_device(), 1)
+
+    def test_neg(self):
+        TestTorch._test_neg(self, lambda t: t.cuda())
 
     def _test_broadcast(self, input):
         if torch.cuda.device_count() < 2:
@@ -600,6 +612,17 @@ class TestCuda(TestCase):
         for t in types:
             cuda_type = get_gpu_type(t)
             self.assertEqual(cuda_type(seq), reference)
+
+    def test_torch_manual_seed_seeds_cuda_devices(self):
+        with freeze_rng_state():
+            x = torch.zeros(4, 4).float().cuda()
+            torch.manual_seed(2)
+            self.assertEqual(torch.cuda.initial_seed(), 2)
+            x.uniform_()
+            torch.manual_seed(2)
+            y = x.clone().uniform_()
+            self.assertEqual(x, y)
+            self.assertEqual(torch.cuda.initial_seed(), 2)
 
     def test_manual_seed(self):
         with freeze_rng_state():
@@ -829,11 +852,39 @@ class TestCuda(TestCase):
         self.assertEqual(gpu_tensor1[0], 1)
         self.assertEqual(gpu_tensor0[0], 2)
 
+    @staticmethod
+    def _select_broadcastable_dims(dims_full=None):
+        return TestTorch._select_broadcastable_dims(dims_full)
+
+    def test_broadcast(self):
+        TestTorch._test_broadcast(self, lambda t: t.cuda())
+
+    def test_contiguous(self):
+        TestTorch._test_contiguous(self, lambda t: t.cuda())
+
+    def test_broadcast_fallback(self):
+        TestTorch._test_broadcast_fallback(self, lambda t: t.cuda())
+
+    def test_broadcast_fused_matmul(self):
+        TestTorch._test_broadcast_fused_matmul(self, lambda t: t.cuda())
+
+    def test_broadcast_batched_matmul(self):
+        TestTorch._test_broadcast_batched_matmul(self, lambda t: t.cuda())
+
+    def test_advancedindex(self):
+        TestTorch._test_advancedindex(self, lambda t: t.cuda())
+
+    def test_advancedindex_big(self):
+        TestTorch._test_advancedindex_big(self, lambda t: t.cuda())
+
     def test_btrifact(self):
         TestTorch._test_btrifact(self, lambda t: t.cuda())
 
     def test_btrisolve(self):
         TestTorch._test_btrisolve(self, lambda t: t.cuda())
+
+    def test_dim_reduction(self):
+        TestTorch._test_dim_reduction(self, lambda t: t.cuda())
 
     def test_tensor_gather(self):
         TestTorch._test_gather(self, lambda t: t.cuda(), False)
@@ -846,6 +897,31 @@ class TestCuda(TestCase):
 
     def test_tensor_scatterFill(self):
         TestTorch._test_scatter_base(self, lambda t: t.cuda(), 'scatter_', True, test_bounds=False)
+
+    def test_arange(self):
+        for t in ['IntTensor', 'LongTensor', 'FloatTensor', 'DoubleTensor']:
+            a = torch.cuda.__dict__[t]()
+            torch.arange(0, 10, out=a)
+            b = torch.__dict__[t]()
+            torch.arange(0, 10, out=b)
+            self.assertEqual(a, b.cuda())
+
+    @unittest.skipIf(torch.cuda.device_count() < 2, "only one GPU detected")
+    def test_get_set_rng_state_all(self):
+        states = torch.cuda.get_rng_state_all()
+        before0 = torch.cuda.FloatTensor(100, device=0).normal_()
+        before1 = torch.cuda.FloatTensor(100, device=1).normal_()
+        torch.cuda.set_rng_state_all(states)
+        after0 = torch.cuda.FloatTensor(100, device=0).normal_()
+        after1 = torch.cuda.FloatTensor(100, device=1).normal_()
+        self.assertEqual(before0, after0, 0)
+        self.assertEqual(before1, after1, 0)
+
+    def test_nvtx(self):
+        # Just making sure we can see the symbols
+        torch.cuda.nvtx.range_push("foo")
+        torch.cuda.nvtx.mark("bar")
+        torch.cuda.nvtx.range_pop()
 
 
 if HAS_CUDA:

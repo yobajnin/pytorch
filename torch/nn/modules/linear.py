@@ -12,14 +12,18 @@ class Linear(Module):
     Args:
         in_features: size of each input sample
         out_features: size of each output sample
-        bias: If set to False, the layer will not learn an additive bias. Default: True
+        bias: If set to False, the layer will not learn an additive bias.
+            Default: True
 
     Shape:
-        - Input: :math:`(N, in\_features)`
-        - Output: :math:`(N, out\_features)`
+        - Input: :math:`(N, *, in\_features)` where `*` means any number of
+          additional dimensions
+        - Output: :math:`(N, *, out\_features)` where all but the last dimension
+          are the same shape as the input.
 
     Attributes:
-        weight: the learnable weights of the module of shape (out_features x in_features)
+        weight: the learnable weights of the module of shape
+            (out_features x in_features)
         bias:   the learnable bias of the module of shape (out_features)
 
     Examples::
@@ -48,10 +52,7 @@ class Linear(Module):
             self.bias.data.uniform_(-stdv, stdv)
 
     def forward(self, input):
-        if self.bias is None:
-            return self._backend.Linear.apply(input, self.weight)
-        else:
-            return self._backend.Linear.apply(input, self.weight, self.bias)
+        return F.linear(input, self.weight, self.bias)
 
     def __repr__(self):
         return self.__class__.__name__ + ' (' \
@@ -60,27 +61,30 @@ class Linear(Module):
 
 
 class Bilinear(Module):
-    r"""Applies a bilinear transformation to the incoming data: :math:`y = x_1 * A * x_2 + b`
+    r"""Applies a bilinear transformation to the incoming data:
+    :math:`y = x_1 * A * x_2 + b`
 
     Args:
         in1_features: size of each first input sample
         in2_features: size of each second input sample
         out_features: size of each output sample
-        bias: If set to False, the layer will not learn an additive bias. Default: True
+        bias: If set to False, the layer will not learn an additive bias.
+            Default: True
 
     Shape:
         - Input: :math:`(N, in1\_features)`, :math:`(N, in2\_features)`
         - Output: :math:`(N, out\_features)`
 
     Attributes:
-        weight: the learnable weights of the module of shape (out_features x in1_features x in2_features)
+        weight: the learnable weights of the module of shape
+            (out_features x in1_features x in2_features)
         bias:   the learnable bias of the module of shape (out_features)
 
     Examples::
 
         >>> m = nn.Bilinear(20, 30, 40)
         >>> input1 = autograd.Variable(torch.randn(128, 20))
-        >>> input1 = autograd.Variable(torch.randn(128, 30))
+        >>> input2 = autograd.Variable(torch.randn(128, 30))
         >>> output = m(input1, input2)
         >>> print(output.size())
     """

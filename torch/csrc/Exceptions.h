@@ -38,6 +38,7 @@ struct python_error : public std::exception {
 
   /** Saves the exception so that it can be re-thrown on a different thread */
   inline void persist() {
+    if (type) return; // Don't overwrite exceptions
     // PyErr_Fetch overwrites the pointers
     AutoGIL gil;
     Py_XDECREF(type);
@@ -48,6 +49,7 @@ struct python_error : public std::exception {
 
   /** Sets the current Python error from this exception */
   inline void restore() {
+    if (!type) return;
     // PyErr_Restore steals references
     AutoGIL gil;
     Py_XINCREF(type);
@@ -62,22 +64,6 @@ struct python_error : public std::exception {
 };
 
 #ifdef _THP_CORE
-
-struct THException: public std::exception {
-  THException(const char* msg): msg(msg) {};
-
-  virtual const char* what() const throw() {
-    return msg.c_str();
-  }
-
-  std::string msg;
-};
-
-struct THArgException: public THException {
-  THArgException(const char* msg, int argNumber): THException(msg), argNumber(argNumber) {};
-
-  const int argNumber;
-};
 
 bool THPException_init(PyObject *module);
 #endif

@@ -200,29 +200,6 @@ static void maybeTriggerGC(ptrdiff_t curHeapSize) {
   }
 }
 
-// hooks into the TH heap tracking
-void THHeapUpdate(ptrdiff_t size) {
-#ifdef DEBUG
-  if (size > 0 && heapDelta > PTRDIFF_MAX - size)
-    THError("THHeapUpdate: heapDelta(%td) + increased(%td) > PTRDIFF_MAX, heapDelta overflow!", heapDelta, size);
-  if (size < 0 && heapDelta < PTRDIFF_MIN - size)
-    THError("THHeapUpdate: heapDelta(%td) + decreased(%td) < PTRDIFF_MIN, heapDelta underflow!", heapDelta, size);
-#endif
-
-  heapDelta += size;
-
-  // batch updates to global heapSize to minimize thread contention
-  if (heapDelta < heapMaxDelta && heapDelta > heapMinDelta) {
-    return;
-  }
-
-  ptrdiff_t newHeapSize = applyHeapDelta();
-
-  if (size > 0) {
-    maybeTriggerGC(newHeapSize);
-  }
-}
-
 static void* THAllocInternal(ptrdiff_t size)
 {
   void *ptr;
@@ -245,7 +222,6 @@ static void* THAllocInternal(ptrdiff_t size)
     ptr = malloc(size);
   }
 
-  THHeapUpdate(getAllocSize(ptr));
   return ptr;
 }
 
@@ -297,15 +273,11 @@ void* THRealloc(void *ptr, ptrdiff_t size)
   if(!newptr)
     THError("$ Torch: not enough memory: you tried to reallocate %dGB. Buy new RAM!", size/1073741824);
 
-  // update heapSize only after successfully reallocated
-  THHeapUpdate(oldSize + getAllocSize(newptr));
-
   return newptr;
 }
 
 void THFree(void *ptr)
 {
-  THHeapUpdate(-getAllocSize(ptr));
   free(ptr);
 }
 
@@ -342,4 +314,43 @@ int THGetNumCores(void)
 #else
   return 1;
 #endif
+}
+
+#ifdef TH_BLAS_MKL
+extern int mkl_get_max_threads(void);
+#endif
+
+TH_API void THInferNumThreads(void)
+{
+#if defined(_OPENMP) && defined(TH_BLAS_MKL)
+  // If we are using MKL an OpenMP make sure the number of threads match.
+  // Otherwise, MKL and our OpenMP-enabled functions will keep changing the
+  // size of the OpenMP thread pool, resulting in worse performance (and memory
+  // leaks in GCC 5.4)
+  omp_set_num_threads(mkl_get_max_threads());
+#endif
+}
+
+TH_API THDescBuff _THSizeDesc(const int64_t *size, const int64_t ndim) {
+  const int L = TH_DESC_BUFF_LEN;
+  THDescBuff buf;
+  char *str = buf.str;
+  int i, n = 0;
+  n += snprintf(str, L-n, "[");
+
+  for (i = 0; i < ndim; i++) {
+    if (n >= L) break;
+    n += snprintf(str+n, L-n, "%" PRId64, size[i]);
+    if (i < ndim-1) {
+      n += snprintf(str+n, L-n, " x ");
+    }
+  }
+
+  if (n < L - 2) {
+    snprintf(str+n, L-n, "]");
+  } else {
+    snprintf(str+L-5, 5, "...]");
+  }
+
+  return buf;
 }

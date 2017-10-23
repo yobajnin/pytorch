@@ -9,7 +9,7 @@ using namespace master;
 // taken from TH (generic/THTensor.c)
 // with a little fixes done so as to allocate
 // and free memory the way it is done in THDTensor
-static void THDTensor_(_resize)(THDTensor *self, int nDimension, long *size, long *stride) {
+static void THDTensor_(_resize)(THDTensor *self, int nDimension, int64_t *size, int64_t *stride) {
   int nDimension_;
   ptrdiff_t totalSize;
   bool hasRequiredSize = true;
@@ -38,8 +38,8 @@ static void THDTensor_(_resize)(THDTensor *self, int nDimension, long *size, lon
     if (nDimension != self->nDimension) {
       delete[] self->size;
       delete[] self->stride;
-      self->size = new long[nDimension];
-      self->stride = new long[nDimension];
+      self->size = new int64_t[nDimension];
+      self->stride = new int64_t[nDimension];
       self->nDimension = nDimension;
     }
 
@@ -68,28 +68,46 @@ static void THDTensor_(_resize)(THDTensor *self, int nDimension, long *size, lon
   }
 }
 
-void THDTensor_(_resize2d)(THDTensor *tensor, long size0, long size1) {
-  long sizes[] = {size0, size1};
+void THDTensor_(_resize2d)(THDTensor *tensor, int64_t size0, int64_t size1) {
+  int64_t sizes[] = {size0, size1};
   THDTensor_(_resize)(tensor, 2, sizes, nullptr);
 }
 
-void THDTensor_(_resize3d)(THDTensor *tensor, long size0, long size1, long size2) {
-  long sizes[] = {size0, size1, size2};
+void THDTensor_(_resize3d)(THDTensor *tensor, int64_t size0, int64_t size1, int64_t size2) {
+  int64_t sizes[] = {size0, size1, size2};
   THDTensor_(_resize)(tensor, 2, sizes, nullptr);
 }
 
-void THDTensor_(_resize4d)(THDTensor *tensor, long size0, long size1, long size2, long size3) {
-  long sizes[] = {size0, size1, size2, size3};
+void THDTensor_(_resize4d)(THDTensor *tensor, int64_t size0, int64_t size1, int64_t size2, int64_t size3) {
+  int64_t sizes[] = {size0, size1, size2, size3};
   THDTensor_(_resize)(tensor, 2, sizes, nullptr);
 }
 
-void THDTensor_(_resize5d)(THDTensor *tensor, long size0, long size1, long size2, long size3, long size4) {
-  long sizes[] = {size0, size1, size2, size3, size4};
+void THDTensor_(_resize5d)(THDTensor *tensor, int64_t size0, int64_t size1, int64_t size2, int64_t size3, int64_t size4) {
+  int64_t sizes[] = {size0, size1, size2, size3, size4};
   THDTensor_(_resize)(tensor, 2, sizes, nullptr);
 }
+
+void THDTensor_(_squeeze1d)(THDTensor *self, THDTensor *src, int dimension) {
+  if (!src)
+    src = self;
+
+  THArgCheck((dimension >= 0) && (dimension < src->nDimension), 2, "dimension out of range");
+
+  THDTensor_(set)(self, src);
+
+  if (src->size[dimension] == 1 && src->nDimension > 1) {
+    for (std::size_t d = dimension; d < self->nDimension-1; d++) {
+      self->size[d] = self->size[d+1];
+      self->stride[d] = self->stride[d+1];
+    }
+    self->nDimension--;
+  }
+}
+
 static void THDTensor_(_set)(THDTensor *self, THDStorage *storage,
                              ptrdiff_t storageOffset, int nDimension,
-                             long *size, long *stride) {
+                             int64_t *size, int64_t *stride) {
   /* storage */
   if (self->storage != storage) {
     if (self->storage)
@@ -115,10 +133,17 @@ static void THDTensor_(_set)(THDTensor *self, THDStorage *storage,
 static THDTensor *THDTensor_(_alloc)() {
   THDTensor *new_tensor = new THDTensor();
   std::memset(reinterpret_cast<void*>(new_tensor), 0, sizeof(THDTensor));
-  new_tensor->tensor_id = THDState::s_nextId++;
+  new_tensor->size = nullptr;
+  new_tensor->stride = nullptr;
+  new_tensor->nDimension = 0;
+
+  new_tensor->storage = nullptr;
+  new_tensor->storageOffset = 0;
+
   new_tensor->refcount = 1;
   new_tensor->flag = TH_TENSOR_REFCOUNTED;
-  // TODO: allocate storage
+
+  new_tensor->tensor_id = THDState::s_nextId++;
   return new_tensor;
 }
 

@@ -1,8 +1,6 @@
 import torch
 from . import nccl
-from torch._utils import _accumulate
-
-# TODO: sync streams when implemented
+from torch._utils import _accumulate, _take_tensors, _flatten_tensors, _unflatten_tensors
 
 
 def broadcast(tensor, devices):
@@ -26,7 +24,6 @@ def broadcast(tensor, devices):
         nccl.broadcast(tensors)
         return tuple(tensors)
 
-    # TODO: copy to a pinned buffer first (if copy is from CPU)
     return tuple(tensor.cuda(gpu, async=True) for gpu in devices)
 
 
@@ -77,22 +74,26 @@ def reduce_add(inputs, destination=None):
     """
     # TODO: try to find an input on another gpu, copy it,
     # and accumulate into the copy
+    if destination is None:
+        destination = torch.cuda.current_device()
     input_size = inputs[0].size()
+    nccl_root = None
     for i, inp in enumerate(inputs):
         assert inp.is_cuda, "reduce_add expects all inputs to be on GPUs"
+        if inp.get_device() == destination:
+            nccl_root = i
         if inp.size() != input_size:
             got = 'x'.join(str(x) for x in inp.size())
             expected = 'x'.join(str(x) for x in input_size)
             raise ValueError("input {} has invalid size: got {}, but expected "
                              "{}".format(i, got, expected))
-    if destination is None:
-        destination = torch.cuda.current_device()
+    assert nccl_root is not None, "reduce_add expects destination to be on the same GPU with one of the tensors"
     with torch.cuda.device(destination):
         result = type(inp)(input_size).zero_()
 
     if nccl.is_available(inputs) and inputs[0].get_device() == destination:
         outputs = [result] + [t.new(t.size()) for t in inputs[1:]]
-        nccl.reduce(inputs, outputs)
+        nccl.reduce(inputs, outputs, root=nccl_root)
         return result
 
     for inp in inputs:
@@ -141,7 +142,7 @@ def scatter(tensor, devices, chunk_sizes=None, dim=0, streams=None):
         dim (int, optional): A dimension along which to chunk the tensor.
 
     Returns:
-        A tuple containing chunks of the ``tensor``, spread accross given
+        A tuple containing chunks of the ``tensor``, spread across given
         ``devices``.
     """
     if chunk_sizes is None:
@@ -207,45 +208,3 @@ def gather(tensors, dim=0, destination=None):
         result.narrow(dim, chunk_start, tensor.size(dim)).copy_(tensor, True)
         chunk_start += tensor.size(dim)
     return result
-
-
-def _flatten_tensors(tensors):
-    """Flatten tensors into a single contiguous 1D buffer"""
-    if len(tensors) == 1:
-        return tensors[0].contiguous().view(-1)
-    size = sum(tensor.numel() for tensor in tensors)
-    offset = 0
-    flat = tensors[0].new(size)
-    for tensor in tensors:
-        flat.narrow(0, offset, tensor.numel()).copy_(tensor)
-        offset += tensor.numel()
-    return flat
-
-
-def _unflatten_tensors(flat, tensors):
-    """View a flat buffer using the sizes of tensors"""
-    outputs = []
-    offset = 0
-    for tensor in tensors:
-        outputs.append(flat.narrow(0, offset, tensor.numel()).view_as(tensor))
-        offset += tensor.numel()
-    return tuple(outputs)
-
-
-def _take_tensors(tensors, size_limit):
-    """Groups tensors into lists of up to size_limit bytes"""
-    buf = []
-    size = 0
-    last_type = type(tensors[0]) if len(tensors) > 0 else None
-    for tensor in tensors:
-        t = type(tensor)
-        param_size = tensor.numel() * tensor.element_size()
-        if t is not last_type or (size + param_size > size_limit and size > 0):
-            yield buf
-            last_type = t
-            size = 0
-            buf = []
-        buf.append(tensor)
-        size += param_size
-    if len(buf) > 0:
-        yield buf

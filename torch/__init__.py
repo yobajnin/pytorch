@@ -5,7 +5,7 @@ Additionally, it provides many utilities for efficient serializing of
 Tensors and arbitrary types, and other useful utilities.
 
 It has a CUDA counterpart, that enables you to run your tensor computations
-on an NVIDIA GPU with compute capability >= 2.0.
+on an NVIDIA GPU with compute capability >= 3.0.
 """
 
 import sys
@@ -15,7 +15,7 @@ from .version import __version__
 __all__ = [
     'typename', 'is_tensor', 'is_storage', 'set_default_tensor_type',
     'set_rng_state', 'get_rng_state', 'manual_seed', 'initial_seed',
-    'save', 'load', 'set_printoptions', 'chunk', 'split', 'stack',
+    'save', 'load', 'set_printoptions', 'chunk', 'split', 'stack', 'matmul',
     'DoubleStorage', 'FloatStorage', 'LongStorage', 'IntStorage',
     'ShortStorage', 'CharStorage', 'ByteStorage',
     'DoubleTensor', 'FloatTensor', 'LongTensor', 'IntTensor',
@@ -108,37 +108,7 @@ def set_default_tensor_type(t):
     _C._set_default_tensor_type(Tensor)
 
 
-def set_rng_state(new_state):
-    r"""Sets the random number generator state.
-
-    Args:
-        new_state (torch.ByteTensor): The desired state
-    """
-    default_generator.set_state(new_state)
-
-
-def get_rng_state():
-    r"""Returns the random number generator state as a ByteTensor."""
-    return default_generator.get_state()
-
-
-def manual_seed(seed):
-    r"""Sets the seed for generating random numbers. And returns a
-    `torch._C.Generator` object.
-
-    Args:
-        seed (int or long): The desired seed.
-    """
-    return default_generator.manual_seed(seed)
-
-
-def initial_seed():
-    r"""Returns the initial seed for generating random numbers as a
-    python `long`.
-    """
-    return default_generator.initial_seed()
-
-
+from .random import set_rng_state, get_rng_state, manual_seed, initial_seed
 from .serialization import save, load
 from ._tensor_str import set_printoptions
 
@@ -265,12 +235,12 @@ class ByteTensor(_C.ByteTensorBase, _TensorBase):
 
 _storage_classes = {
     DoubleStorage, FloatStorage, LongStorage, IntStorage, ShortStorage,
-    CharStorage, ByteStorage,
+    CharStorage, ByteStorage, HalfStorage
 }
 
 _tensor_classes = {
     DoubleTensor, FloatTensor, LongTensor, IntTensor, ShortTensor,
-    CharTensor, ByteTensor,
+    CharTensor, ByteTensor, HalfTensor
 }
 
 
@@ -336,8 +306,13 @@ import torch.nn
 import torch.optim
 import torch.multiprocessing
 import torch.sparse
+import torch.utils.backcompat
+import torch.onnx
+import torch.random
+import torch.distributions
+
 _C._init_names(list(torch._tensor_classes) + list(torch._storage_classes))
 
 # attach docstrings to torch and tensor functions
-from . import _torch_docs, _tensor_docs
-del _torch_docs, _tensor_docs
+from . import _torch_docs, _tensor_docs, _storage_docs
+del _torch_docs, _tensor_docs, _storage_docs

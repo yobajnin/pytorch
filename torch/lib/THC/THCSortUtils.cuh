@@ -134,6 +134,7 @@ __device__ inline void bitonicSortKeys(K keys[Power2SortSize],
 template <typename K, typename V,
           int KeyDims, int ValueDims,
           typename Comparator, typename IndexType, int Power2SortSize>
+__launch_bounds__(1024)
 __global__ void
 bitonicSortKVInPlace(TensorInfo<K, IndexType> keys,
                      IndexType keySlices,
@@ -210,6 +211,6 @@ bitonicSortKVInPlace(TensorInfo<K, IndexType> keys,
   }
 }
 
-unsigned long nextHighestPowerOf2(unsigned long n);
+uint64_t nextHighestPowerOf2(uint64_t n);
 
 #endif // THC_SORT_UTILS_INC

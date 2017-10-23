@@ -316,10 +316,10 @@ void DataChannelMPI::broadcast(thpp::Tensor& data, rank_type src_rank,
 }
 
 
-void DataChannelMPI::send(const Scalar& data, rank_type dst_rank) {
+void DataChannelMPI::send(Scalar& data, rank_type dst_rank) {
   std::uint64_t scalar_bytes = data.elementSize();
   MPI_Send(&scalar_bytes, 1, MPI_UINT64_T, dst_rank, 0, MPI_COMM_WORLD);
-  MPI_Send(reinterpret_cast<const std::uint8_t*>(data.data()), scalar_bytes,
+  MPI_Send(reinterpret_cast<std::uint8_t*>(data.data()), scalar_bytes,
            MPI_UINT8_T, dst_rank, 0, MPI_COMM_WORLD);
 }
 
@@ -330,7 +330,7 @@ void DataChannelMPI::send(thpp::Tensor& data, rank_type dst_rank) {
 
   std::uint64_t tensor_bytes = data.elementSize() * data.numel();
   MPI_Send(&tensor_bytes, 1, MPI_UINT64_T, dst_rank, 0, MPI_COMM_WORLD);
-  MPI_Send(reinterpret_cast<const std::uint8_t*>(data.data()), tensor_bytes,
+  MPI_Send(reinterpret_cast<std::uint8_t*>(data.data()), tensor_bytes,
            MPI_UINT8_T, dst_rank, 0, MPI_COMM_WORLD);
 }
 
@@ -354,7 +354,7 @@ void DataChannelMPI::receive(Scalar& data, rank_type src_rank) {
 }
 
 
-void DataChannelMPI::receive(thpp::Tensor& data) {
+rank_type DataChannelMPI::receive(thpp::Tensor& data) {
   if (!data.isContiguous())
     throw std::logic_error("tensor to receive is not contiguous");
 
@@ -364,8 +364,10 @@ void DataChannelMPI::receive(thpp::Tensor& data) {
 
   std::uint64_t actual_tensor_bytes = data.elementSize() * data.numel();
   if (actual_tensor_bytes == tensor_bytes) {
+    MPI_Status status;
     MPI_Recv(data.data(), tensor_bytes, MPI_UINT8_T, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD,
-             MPI_STATUS_IGNORE);
+             &status);
+    return status.MPI_SOURCE;
   } else {
     // receive invalid data
     std::unique_ptr<std::uint8_t[]> bytes(new std::uint8_t[tensor_bytes]);
@@ -476,7 +478,7 @@ THDGroup DataChannelMPI::newGroup(const std::vector<rank_type>& ranks) {
   MPI_Group_incl(world_group, int_ranks.size(), int_ranks.data(), &ranks_group);
 
   MPI_Comm new_comm;
-  MPI_Comm_create_group(MPI_COMM_WORLD, ranks_group, 0, &new_comm);
+  MPI_Comm_create(MPI_COMM_WORLD, ranks_group, &new_comm);
 
   MPI_Group_free(&world_group);
   MPI_Group_free(&ranks_group);

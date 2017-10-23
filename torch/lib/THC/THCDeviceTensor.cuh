@@ -47,7 +47,7 @@ struct DefaultPtrTraits {
 - `T` is the contained type (e.g., `float`)
 - `Dim` is the tensor rank
 - `IndexT` is the integer type used for size/stride arrays, and for
-- all indexing math. Default is `int`, but for large tensors, `long`
+- all indexing math. Default is `int`, but for large tensors, `int64_t`
 - can be used instead.
 - `PtrTraits` are traits applied to our data pointer (T*). By default,
 - this is just T*, but RestrictPtrTraits can be used to apply T*
@@ -181,8 +181,8 @@ class THCDeviceTensor {
   // touch the same memory locations multiple times.
   __host__ __device__ bool isConsistentlySized() const;
 
-  /// Returns true if the given dimension index has no padding
-  __host__ __device__ bool isContiguousDim(int i) const;
+  /// Returns true if the given dimension range [first, last) has no padding.
+  __host__ __device__ bool isContiguousRange(int first, int last) const;
 
   /// Returns a tensor of the same dimension after transposing the two
   /// dimensions given. Does not actually move elements; transposition

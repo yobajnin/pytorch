@@ -1,4 +1,5 @@
 import os
+import sys
 import glob
 from itertools import chain
 
@@ -10,6 +11,9 @@ def gather_paths(env_vars):
     return list(chain(*(os.getenv(v, '').split(':') for v in env_vars)))
 
 
+is_conda = 'conda' in sys.version or 'Continuum' in sys.version
+conda_dir = os.path.join(os.path.dirname(sys.executable), '..')
+
 WITH_CUDNN = False
 CUDNN_LIB_DIR = None
 CUDNN_INCLUDE_DIR = None
@@ -20,8 +24,11 @@ if WITH_CUDA and not check_env_flag('NO_CUDNN'):
         os.path.join(CUDA_HOME, 'lib64'),
         '/usr/lib/x86_64-linux-gnu/',
         '/usr/lib/powerpc64le-linux-gnu/',
+        '/usr/lib/aarch64-linux-gnu/',
     ] + gather_paths([
         'LIBRARY_PATH',
+    ]) + gather_paths([
+        'LD_LIBRARY_PATH',
     ])))
     include_paths = list(filter(bool, [
         os.getenv('CUDNN_INCLUDE_DIR'),
@@ -32,6 +39,9 @@ if WITH_CUDA and not check_env_flag('NO_CUDNN'):
         'C_INCLUDE_PATH',
         'CPLUS_INCLUDE_PATH',
     ])))
+    if is_conda:
+        lib_paths.append(os.path.join(conda_dir, 'lib'))
+        include_paths.append(os.path.join(conda_dir, 'include'))
     for path in lib_paths:
         if path is None or not os.path.exists(path):
             continue

@@ -2,6 +2,7 @@
 #define THC_SCAN_UTILS_INC
 
 #include "THCAsmUtils.cuh"
+#include "THCDeviceUtils.cuh"
 
 // Collection of in-kernel scan / prefix sum utilities
 
@@ -49,7 +50,7 @@ __device__ void inclusivePrefixScan(T *smem, BinaryOp binop) {
   }
 }
 
-// Generic Op that can be be used to support segmented scans by re-using
+// Generic Op that can be used to support segmented scans by re-using
 // the basic inclusiveScanOp. Merely requires that the input data has both
 // a flag and val component
 template <typename T, class BinaryOp>
@@ -152,7 +153,7 @@ __device__ void exclusivePrefixScan(T* smem, T in, T* out, T* carry, BinaryFunct
 template <typename T, bool KillWARDependency, class BinaryFunction>
 __device__ void inclusiveBinaryPrefixScan(T* smem, bool in, T* out, BinaryFunction binop) {
   // Within-warp, we use warp voting.
-  T vote = __ballot(in);
+  T vote = WARP_BALLOT(in);
   T index = __popc(getLaneMaskLe() & vote);
   T carry = __popc(vote);
 

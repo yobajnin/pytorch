@@ -82,10 +82,36 @@ PyObject * THPTensor_(setIndex)(THPTensor *self, PyObject *args)
 }
 
 [[
+  python_name: _check_advanced_indexing
+  name: THPTensor_(checkAdvancedIndexing)
+  cpu_half: False
+  only_register: True
+  override_method_flags: METH_O
+]]
+
+[[
+  python_name: _advanced_index_add
+  name: THPTensor_(advancedIndexAdd)
+  cpu_half: False
+  only_register: True
+]]
+
+[[
+  python_name: _advanced_index_select
+  name: THPTensor_(advancedIndexSelect)
+  cpu_half: False
+  only_register: True
+]]
+
+[[
   name: resize_
   return: self
   cname: resize
   cpu_half: True
+  before_call:
+    THPUtils_assert(arg_self->storage->flag & TH_STORAGE_RESIZABLE,
+      "calling resize_ on a tensor that has non-resizable storage. Clone it first "
+      "or create a new tensor instead.");
   arguments:
     - THTensor* self
     - arg: THSize* size
@@ -95,7 +121,8 @@ PyObject * THPTensor_(setIndex)(THPTensor *self, PyObject *args)
 
 [[
   name: zeros
-  only_stateless: True
+  variants:
+    - function
   auto_gpu: False
   return: argument 0
   arguments:
@@ -106,8 +133,21 @@ PyObject * THPTensor_(setIndex)(THPTensor *self, PyObject *args)
 ]]
 
 [[
+  name: zeros_like
+  cname: zerosLike
+  variants:
+    - function
+  return: argument 0
+  arguments:
+    - arg: THTensor* result
+      output: True
+    - THTensor* input
+]]
+
+[[
   name: ones
-  only_stateless: True
+  variants:
+    - function
   auto_gpu: False
   return: argument 0
   arguments:
@@ -115,6 +155,18 @@ PyObject * THPTensor_(setIndex)(THPTensor *self, PyObject *args)
       output: True
     - arg: THSize* size
       long_args: True
+]]
+
+[[
+  name: ones_like
+  cname: onesLike
+  variants:
+    - function
+  return: argument 0
+  arguments:
+    - arg: THTensor* result
+      output: True
+    - THTensor* input
 ]]
 
 [[
@@ -123,7 +175,9 @@ PyObject * THPTensor_(setIndex)(THPTensor *self, PyObject *args)
   cname: nElement
   cpu_half: True
   auto_gpu: False
-  with_stateless: True
+  variants:
+    - method
+    - function
   arguments:
     - THTensor* self
 ]]
@@ -329,7 +383,8 @@ PyObject * THPTensor_(stride)(PyObject *self, PyObject *args, PyObject *kwargs)
   python_name: masked_fill_
   return: self
   arguments:
-    - THTensor* self
+    - arg: THTensor* self
+      broadcast: mask inplace fallback types:Byte
     - THBoolTensor* mask
     - real value
 ]]
@@ -337,10 +392,11 @@ PyObject * THPTensor_(stride)(PyObject *self, PyObject *args, PyObject *kwargs)
 [[
   name: maskedCopy_
   cname: maskedCopy
-  python_name: masked_copy_
+  python_name: masked_scatter_
   return: self
   arguments:
-    - THTensor* self
+    - arg: THTensor* self
+      broadcast: mask inplace fallback types:Byte
     - THBoolTensor* mask
     - THTensor* source
 ]]
@@ -348,18 +404,23 @@ PyObject * THPTensor_(stride)(PyObject *self, PyObject *args, PyObject *kwargs)
 [[
   name: maskedSelect
   python_name: masked_select
-  with_stateless: True
+  variants:
+    - method
+    - function
   return: argument 0
   arguments:
     - arg: THTensor* result
       output: True
-    - THTensor* self
+    - arg: THTensor* self
+      broadcast: mask fallback types:Byte
     - THBoolTensor* mask
 ]]
 
 [[
   name: transpose
-  with_stateless: True
+  variants:
+    - method
+    - function
   cname: newTranspose
   cpu_half: True
   auto_gpu: False
@@ -389,7 +450,9 @@ PyObject * THPTensor_(stride)(PyObject *self, PyObject *args, PyObject *kwargs)
 
 [[
   name: t
-  with_stateless: True
+  variants:
+    - method
+    - function
   auto_gpu: False
   cname: newTranspose
   return: THTensor*
@@ -420,7 +483,9 @@ PyObject * THPTensor_(stride)(PyObject *self, PyObject *args, PyObject *kwargs)
 [[
   name: squeeze
   cpu_half: True
-  with_stateless: True
+  variants:
+    - method
+    - function
   return: argument 0
   options:
     - arguments:
@@ -455,7 +520,9 @@ PyObject * THPTensor_(stride)(PyObject *self, PyObject *args, PyObject *kwargs)
 
 [[
   name: unsqueeze
-  with_stateless: True
+  variants:
+    - method
+    - function
   cpu_half: True
   auto_gpu: False
   return: argument 0
@@ -483,7 +550,9 @@ PyObject * THPTensor_(stride)(PyObject *self, PyObject *args, PyObject *kwargs)
 
 [[
   name: nonzero
-  with_stateless: True
+  variants:
+    - method
+    - function
   return: argument 0
   arguments:
     - arg: THIndexTensor* result
@@ -503,6 +572,7 @@ PyObject * THPTensor_(stride)(PyObject *self, PyObject *args, PyObject *kwargs)
   name: clone
   cname: newClone
   return: THTensor*
+  aten_sparse: True
   arguments:
     - THTensor* self
 ]]
@@ -535,13 +605,15 @@ PyObject * THPTensor_(stride)(PyObject *self, PyObject *args, PyObject *kwargs)
   return: self
   arguments:
     - THTensor* self
-    - THTensor* template
+    - THTensor* the_template
 ]]
 
 [[
   name: indexSelect
   python_name: index_select
-  with_stateless: True
+  variants:
+    - method
+    - function
   return: argument 0
   arguments:
     - arg: THTensor* result
@@ -623,8 +695,11 @@ PyObject * THPTensor_(stride)(PyObject *self, PyObject *args, PyObject *kwargs)
 
 [[
   name: range
-  only_stateless: True
-  defined_if: "!IS_CUDA"
+  variants:
+    - function
+  backends:
+    - CPU
+    - CUDA
   return: argument 0
   before_arg_assign: |
     PyErr_WarnEx(PyExc_UserWarning, "torch.range is deprecated in favor of torch.arange "
@@ -641,26 +716,20 @@ PyObject * THPTensor_(stride)(PyObject *self, PyObject *args, PyObject *kwargs)
 
 [[
   name: arange
-  cname: range
-  only_stateless: True
-  defined_if: "!IS_CUDA"
+  variants:
+    - function
+  backends:
+    - CPU
+    - CUDA
   return: argument 0
   options:
-    - before_call: |
-        if (mod_traits<accreal>::mod(arg_end - arg_start, arg_step) == 0) {
-          arg_end -= arg_step;
-        }
-      arguments:
+      - arguments:
         - arg: THTensor* result
           output: True
         - accreal start
         - accreal end
         - accreal step
-    - before_call: |
-        if (mod_traits<accreal>::mod(arg_end - arg_start, 1) == 0) {
-          arg_end -= 1;
-        }
-      arguments:
+      - arguments:
         - arg: THTensor* result
           output: True
         - accreal start
@@ -703,7 +772,9 @@ PyObject * THPTensor_(stride)(PyObject *self, PyObject *args, PyObject *kwargs)
 
 [[
   name: gather
-  with_stateless: True
+  variants:
+    - method
+    - function
   return: argument 0
   before_call: |
     THLongStoragePtr _size(THIndexTensor_(newSizeOf)(LIBRARY_STATE arg_index));
@@ -711,6 +782,7 @@ PyObject * THPTensor_(stride)(PyObject *self, PyObject *args, PyObject *kwargs)
   arguments:
     - arg: THTensor* result
       output: True
+      resize: index
     - THTensor* self
     - arg: long dim
       wrap_dim: self
@@ -722,7 +794,8 @@ PyObject * THPTensor_(stride)(PyObject *self, PyObject *args, PyObject *kwargs)
   python_name: cat
   method_flags: METH_KEYWORDS
   only_register: True
-  only_stateless: True
+  variants:
+    - function
 ]]
 #ifndef TH_REAL_IS_HALF
 static PyObject * THPTensor_stateless_(cat)(THPTensor *_unused, PyObject *args, PyObject *kwargs)
@@ -802,6 +875,8 @@ invalid_arguments:
 [[
   name: data_ptr
   defined_if: "!IS_DISTRIBUTED"
+  with_gil: True
+  auto_gpu: False
   return: void*
   cpu_half: True
   cname: data
@@ -811,7 +886,9 @@ invalid_arguments:
 
 [[
   name: equal
-  with_stateless: True
+  variants:
+    - method
+    - function
   return: bool
   arguments:
     - THTensor* self
@@ -828,13 +905,15 @@ invalid_arguments:
 PyObject * THPTensor_(copy_)(PyObject *self, PyObject *args, PyObject *kwargs)
 {
   HANDLE_TH_ERRORS
-  return THPCopyMethod(THTensor_(copy_functions), self, args, kwargs);
+  return THPTensorCopyMethod(THTensor_(copy_functions), self, args, kwargs);
   END_HANDLE_TH_ERRORS
 }
 
 [[
   name: __and__
-  with_stateless: True
+  variants:
+    - method
+    - function
   return: argument 0
   options:
     - cname: bitand
@@ -847,13 +926,16 @@ PyObject * THPTensor_(copy_)(PyObject *self, PyObject *args, PyObject *kwargs)
       arguments:
         - arg: THTensor* result
           output: True
-        - THTensor* self
+        - arg: THTensor* self
+          broadcast: other fallback
         - THTensor* other
 ]]
 
 [[
   name: __iand__
-  with_stateless: True
+  variants:
+    - method
+    - function
   return: argument 0
   options:
     - cname: bitand
@@ -864,13 +946,16 @@ PyObject * THPTensor_(copy_)(PyObject *self, PyObject *args, PyObject *kwargs)
     - cname: cbitand
       arguments:
         - THTensor* self
-        - THTensor* self
+        - arg: THTensor* self
+          broadcast: other inplace fallback
         - THTensor* other
 ]]
 
 [[
   name: __or__
-  with_stateless: True
+  variants:
+    - method
+    - function
   return: argument 0
   options:
     - cname: bitor
@@ -883,13 +968,16 @@ PyObject * THPTensor_(copy_)(PyObject *self, PyObject *args, PyObject *kwargs)
       arguments:
         - arg: THTensor* result
           output: True
-        - THTensor* self
+        - arg: THTensor* self
+          broadcast: other fallback
         - THTensor* other
 ]]
 
 [[
   name: __ior__
-  with_stateless: True
+  variants:
+    - method
+    - function
   return: argument 0
   options:
     - cname: bitor
@@ -900,13 +988,16 @@ PyObject * THPTensor_(copy_)(PyObject *self, PyObject *args, PyObject *kwargs)
     - cname: cbitor
       arguments:
         - THTensor* self
-        - THTensor* self
+        - arg: THTensor* self
+          broadcast: other inplace fallback
         - THTensor* other
 ]]
 
 [[
   name: __xor__
-  with_stateless: True
+  variants:
+    - method
+    - function
   return: argument 0
   options:
     - cname: bitxor
@@ -919,13 +1010,16 @@ PyObject * THPTensor_(copy_)(PyObject *self, PyObject *args, PyObject *kwargs)
       arguments:
         - arg: THTensor* result
           output: True
-        - THTensor* self
+        - arg: THTensor* self
+          broadcast: other fallback
         - THTensor* other
 ]]
 
 [[
   name: __ixor__
-  with_stateless: True
+  variants:
+    - method
+    - function
   return: argument 0
   options:
     - cname: bitxor
@@ -936,13 +1030,16 @@ PyObject * THPTensor_(copy_)(PyObject *self, PyObject *args, PyObject *kwargs)
     - cname: cbitxor
       arguments:
         - THTensor* self
-        - THTensor* self
+        - arg: THTensor* self
+          broadcast: other inplace fallback
         - THTensor* other
 ]]
 
 [[
   name: __lshift__
-  with_stateless: True
+  variants:
+    - method
+    - function
   return: argument 0
   options:
     - cname: lshift
@@ -955,13 +1052,16 @@ PyObject * THPTensor_(copy_)(PyObject *self, PyObject *args, PyObject *kwargs)
       arguments:
         - arg: THTensor* result
           output: True
-        - THTensor* self
+        - arg: THTensor* self
+          broadcast: other fallback
         - THTensor* other
 ]]
 
 [[
   name: __ilshift__
-  with_stateless: True
+  variants:
+    - method
+    - function
   return: argument 0
   options:
     - cname: lshift
@@ -972,13 +1072,16 @@ PyObject * THPTensor_(copy_)(PyObject *self, PyObject *args, PyObject *kwargs)
     - cname: clshift
       arguments:
         - THTensor* self
-        - THTensor* self
+        - arg: THTensor* self
+          broadcast: other inplace fallback
         - THTensor* other
 ]]
 
 [[
   name: __rshift__
-  with_stateless: True
+  variants:
+    - method
+    - function
   return: argument 0
   options:
     - cname: rshift
@@ -991,13 +1094,16 @@ PyObject * THPTensor_(copy_)(PyObject *self, PyObject *args, PyObject *kwargs)
       arguments:
         - arg: THTensor* result
           output: True
-        - THTensor* self
+        - arg: THTensor* self
+          broadcast: other fallback
         - THTensor* other
 ]]
 
 [[
   name: __irshift__
-  with_stateless: True
+  variants:
+    - method
+    - function
   return: argument 0
   options:
     - cname: rshift
@@ -1008,6 +1114,7 @@ PyObject * THPTensor_(copy_)(PyObject *self, PyObject *args, PyObject *kwargs)
     - cname: crshift
       arguments:
         - THTensor* self
-        - THTensor* self
+        - arg: THTensor* self
+          broadcast: other inplace fallback
         - THTensor* other
 ]]
