@@ -1,6 +1,7 @@
 import torch
 from torch.autograd import Variable
 from collections import Iterable
+import torch.testing
 import sys
 
 
@@ -95,9 +96,10 @@ def get_numerical_jacobian(fn, input, target, eps=1e-3):
 
 
 def get_analytical_jacobian(input, output):
+    input = contiguous(input)
     jacobian = make_jacobian(input, output.numel())
     jacobian_reentrant = make_jacobian(input, output.numel())
-    grad_output = output.data.clone().zero_()
+    grad_output = torch.zeros_like(output)
     flat_grad_output = grad_output.view(-1)
     reentrant = True
     correct_grad_sizes = True
@@ -109,15 +111,16 @@ def get_analytical_jacobian(input, output):
             zero_gradients(input)
             output.backward(grad_output, create_graph=True)
             for jacobian_x, (d_x, x) in zip(jacobian_c, iter_variables(input)):
-                if d_x is None:
-                    jacobian_x[:, i].zero_()
-                else:
-                    if d_x.size() != x.size():
-                        correct_grad_sizes = False
-                    jacobian_x[:, i] = d_x.to_dense() if d_x.is_sparse else d_x
+                if jacobian_x.numel() != 0:
+                    if d_x is None:
+                        jacobian_x[:, i].zero_()
+                    else:
+                        jacobian_x[:, i] = d_x.to_dense() if d_x.is_sparse else d_x
+                if d_x is not None and d_x.size() != x.size():
+                    correct_grad_sizes = False
 
     for jacobian_x, jacobian_reentrant_x in zip(jacobian, jacobian_reentrant):
-        if (jacobian_x - jacobian_reentrant_x).abs().max() != 0:
+        if jacobian_x.numel() != 0 and (jacobian_x - jacobian_reentrant_x).abs().max() != 0:
             reentrant = False
 
     return jacobian, reentrant, correct_grad_sizes
@@ -133,7 +136,7 @@ def _as_tuple(x):
 
 
 def _differentiable_outputs(x):
-    return tuple(o for o in _as_tuple(x) if o.requires_grad or o.grad_fn is not None)
+    return tuple(o for o in _as_tuple(x) if o.requires_grad)
 
 
 def gradcheck(func, inputs, eps=1e-6, atol=1e-5, rtol=1e-3, raise_exception=True):
@@ -177,8 +180,9 @@ def gradcheck(func, inputs, eps=1e-6, atol=1e-5, rtol=1e-3, raise_exception=True
         numerical = get_numerical_jacobian(fn, inputs, inputs, eps)
 
         for j, (a, n) in enumerate(zip(analytical, numerical)):
-            if not ((a - n).abs() <= (atol + rtol * n.abs())).all():
-                return fail_test('for output no. %d,\n numerical:%s\nanalytical:%s\n' % (j, numerical, analytical))
+            if a.numel() != 0 or n.numel() != 0:
+                if not ((a - n).abs() <= (atol + rtol * n.abs())).all():
+                    return fail_test('for output no. %d,\n numerical:%s\nanalytical:%s\n' % (j, numerical, analytical))
 
         if not reentrant:
             return fail_test('not reentrant')
@@ -190,7 +194,7 @@ def gradcheck(func, inputs, eps=1e-6, atol=1e-5, rtol=1e-3, raise_exception=True
     zero_gradients(inputs)
     output = _differentiable_outputs(func(*inputs))
     if any([o.requires_grad for o in output]):
-        torch.autograd.backward(output, [o.data.new(o.size()).zero_() for o in output], create_graph=True)
+        torch.autograd.backward(output, [torch.zeros_like(o) for o in output], create_graph=True)
         var_inputs = list(filter(lambda i: isinstance(i, Variable), inputs))
         if not var_inputs:
             raise RuntimeError("no Variables found in input")
@@ -203,7 +207,7 @@ def gradcheck(func, inputs, eps=1e-6, atol=1e-5, rtol=1e-3, raise_exception=True
     return True
 
 
-def gradgradcheck(func, inputs, grad_outputs, eps=1e-6, atol=1e-5, rtol=1e-3):
+def gradgradcheck(func, inputs, grad_outputs=None, eps=1e-6, atol=1e-5, rtol=1e-3, gen_non_contig_grad_outputs=False):
     """Check gradients of gradients computed via small finite differences
        against analytical gradients
     This function checks that backpropagating through the gradients computed
@@ -216,22 +220,37 @@ def gradgradcheck(func, inputs, grad_outputs, eps=1e-6, atol=1e-5, rtol=1e-3):
     is true for all elements of analytical gradient a and numerical gradient n.
 
     Args:
-        func: Python function that takes Variable inputs and returns
+        func (function): Python function that takes Variable inputs and returns
             a tuple of Variables
-        inputs: tuple of Variables
-        grad_outputs: tuple of Variables
-        eps: perturbation for finite differences
-        atol: absolute tolerance
-        rtol: relative tolerance
+        inputs (tuple of Variable): inputs to the function
+        grad_outputs (tuple of Variable, optional): The gradients with respect to
+            the function's outputs.
+        eps (float, optional): perturbation for finite differences
+        atol (float, optional): absolute tolerance
+        rtol (float, optional): relative tolerance
 
     Returns:
-        True if all differences satisfy allclose condition
+        True if all differences satisfy allclose condition. Raises an exception
+        otherwise.
     """
+    if grad_outputs is None:
+        # If grad_outputs is not specified, create random variables of the same
+        # shape, type, and device as the outputs
+        def randn_like(x):
+            var = torch.testing.randn_like(x if x.is_floating_point() else x.double())
+            if gen_non_contig_grad_outputs:
+                var = torch.testing.make_non_contiguous(var)
+            var.requires_grad = True
+            return var
+        outputs = _as_tuple(func(*inputs))
+        grad_outputs_gen = (randn_like(x) for x in outputs)
+        grad_outputs = list(grad_outputs_gen) if not isinstance(inputs, tuple) else tuple(grad_outputs_gen)
+
     def new_func(*input_args):
         input_args = input_args[:-len(grad_outputs)]
         outputs = _differentiable_outputs(func(*input_args))
         input_args = tuple(x for x in input_args if isinstance(x, Variable) and x.requires_grad)
-        grad_inputs = torch.autograd.grad(outputs, input_args, grad_outputs)
+        grad_inputs = torch.autograd.grad(outputs, input_args, grad_outputs, create_graph=True)
         return grad_inputs
 
     return gradcheck(new_func, inputs + grad_outputs, eps, atol, rtol)

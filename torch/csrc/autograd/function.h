@@ -9,9 +9,11 @@
 #include "torch/csrc/autograd/saved_variable.h"
 #include "torch/csrc/utils/auto_unique_ptr.h"
 #include "torch/csrc/utils/python_stub.h"
+#include "torch/csrc/utils/variadic.h"
 #include "torch/csrc/autograd/function_hook.h"
 #include "torch/csrc/autograd/profiler.h"
 #include "torch/csrc/jit/tracer.h"
+#include "torch/csrc/autograd/grad_mode.h"
 
 #include <ATen/ATen.h>
 
@@ -37,26 +39,66 @@ struct edge_hasher {
   }
 };
 
+// TODO: separate is_executable and next_functions
 // State used to create "backward" functions
 struct FunctionFlags {
   // Roughly speaking, is_executable corresponds to requires_grad.
-  // See http://pytorch.org/docs/notes/autograd.html for more details:
-  // both is_executable and is_volatile specify whether or not backwards
-  // gradient computation will be performed for a function, but they differ in
-  // their precedence.
+  // It's true if any input requires grad and gradient calculation is enabled.
+  // See http://pytorch.org/docs/notes/autograd.html for more details.
   bool is_executable = false;
-  bool is_volatile = false;
   // What functions take the output of this function as input.
   // There is one function per output of this function.
   function_list next_functions;
 };
 
+namespace detail {
+
+// Why can't we just combine the set_variable and set_tensor variants
+// into one set of overloads?  The problem is Variable is convertible
+// to both Tensor and ArrayRef<Variable>, making the overload ambiguous.
+
+// Invariant: this function unconditionally calls f.next_functions.emplace_back
+inline void set_function_flags(FunctionFlags& f, const Variable& var) {
+  if (!var.defined()) {
+    f.next_functions.emplace_back();
+    return;
+  }
+  f.is_executable |= var.requires_grad();
+  if (var.grad_fn()) {
+    f.next_functions.emplace_back(var.grad_fn(), var.output_nr());
+  } else if (var.requires_grad()) {
+    f.next_functions.emplace_back(var.grad_accumulator(), 0);
+  } else {
+    f.next_functions.emplace_back();
+  }
+}
+
+struct SetFunctionFlags : IterArgs<SetFunctionFlags> {
+  FunctionFlags& out;
+  SetFunctionFlags(FunctionFlags& out) : out(out) {}
+  using IterArgs<SetFunctionFlags>::operator();
+  void operator()(const Variable& v) { set_function_flags(out, v); }
+};
+
+struct SetTensorFunctionFlags : IterArgs<SetTensorFunctionFlags> {
+  FunctionFlags& out;
+  SetTensorFunctionFlags(FunctionFlags& out) : out(out) {}
+  using IterArgs<SetTensorFunctionFlags>::operator();
+  void operator()(const Tensor& t) {
+    set_function_flags(out, static_cast<const Variable&>(t));
+  }
+};
+
+
+} // namespace detail
+
 struct Function : std::enable_shared_from_this<Function> {
+  static thread_local uint64_t function_counter;
+
   Function()
     : num_inputs(0)
+    , time(function_counter++)
     , next_functions()
-    , is_executable(false)
-    , is_stochastic(false)
     , pre_hooks()
     , post_hooks()
     , pyobj(nullptr)
@@ -64,9 +106,8 @@ struct Function : std::enable_shared_from_this<Function> {
 
   Function(FunctionFlags&& flags)
     : num_inputs(0)
+    , time(function_counter++)
     , next_functions(std::move(flags.next_functions))
-    , is_executable(flags.is_executable)
-    , is_stochastic(false)
     , pre_hooks()
     , post_hooks()
     , pyobj(nullptr)
@@ -77,13 +118,13 @@ struct Function : std::enable_shared_from_this<Function> {
   virtual ~Function() {}
 
   // Implements the operation
-  // NOTE: Don't call this function directly. Use apply_fn or operator() instead.
+  // NOTE: Don't call this function directly. Use operator() instead.
   virtual variable_list apply(const variable_list& inputs) = 0;
   variable_list tracedApply(variable_list inputs);
 
   variable_list operator()(const variable_list& inputs) {
     profiler::RecordFunction rec(this);
-    if (jit::tracer::isTracing(inputs)) {
+    if (jit::tracer::isTracingVar(inputs)) {
       return tracedApply(inputs);
     }
     return apply(inputs);
@@ -95,21 +136,37 @@ struct Function : std::enable_shared_from_this<Function> {
     return shared_from_this();
   };
 
-  // Computes is_executable, is_volatile, and next_functions from a list
-  // of input variables
-  static FunctionFlags flags(const variable_list& inputs);
-  static FunctionFlags flags(const std::initializer_list<Variable>& inputs);
-  static FunctionFlags flags(at::TensorList inputs);
+  // Computes is_executable and next_functions from an arbitrary argument list
+  // of variables and lists of variables (but whose static type is Tensor)
+  template<typename... Args> inline static FunctionFlags tensor_flags(Args&&... args) {
+    FunctionFlags f;
+    if (!GradMode::is_enabled()) return f;
+    f.next_functions.reserve(count_tensors(std::forward<Args>(args)...));
+    detail::SetTensorFunctionFlags(f).apply(std::forward<Args>(args)...);
+    return f; // RVO
+  }
+
+  // Computes is_executable and next_functions from an arbitrary argument list
+  // of variables and lists of variables
+  template<typename... Args> inline static FunctionFlags flags(Args&&... args) {
+    FunctionFlags f;
+    if (!GradMode::is_enabled()) return f;
+    f.next_functions.reserve(count_variables(std::forward<Args>(args)...));
+    detail::SetFunctionFlags(f).apply(std::forward<Args>(args)...);
+    return f; // RVO
+  }
 
   // Releases saved variables if the operation won't be reused
   virtual inline void releaseVariables() {}
-
+  // called before a an apply if will release variables is going to be called
+  // allows larger ops like InterpreterAutogradFunction
+  // to incrementally release variables as they run
+  virtual inline void willReleaseVariables() {}
   // Function name for debugging
   virtual std::string name();
 
   inline bool should_compute_output(int i) const {
-    auto& fn = next_functions[i].first;
-    return fn && fn->is_executable;
+    return bool(next_functions[i].first);
   }
 
   inline bool should_compute_any_outputs() const {
@@ -127,8 +184,16 @@ struct Function : std::enable_shared_from_this<Function> {
     });
   }
 
+  inline bool should_compute_output(std::initializer_list<std::pair<size_t, size_t>> idxs) const {
+    return std::any_of(idxs.begin(), idxs.end(), [this](std::pair<size_t, size_t> range) {
+      for (size_t i = range.first; i < range.second; i++) {
+        if (should_compute_output(i)) return true;
+      }
+      return false;
+    });
+  }
+
   inline void set_flags(FunctionFlags&& flags) {
-    is_executable = flags.is_executable;
     next_functions = std::move(flags.next_functions);
   }
 
@@ -154,13 +219,12 @@ struct Function : std::enable_shared_from_this<Function> {
   // need to be implemented :)
   virtual inline std::unique_ptr<saved_variable_list> saved_variables() { return nullptr; }
 
-  static void setUpContextEdge(jit::Node* this_node, int ctx_output_nr,
+  static void setUpContextEdge(jit::Node* this_node,
                                const variable_list& inputs, const variable_list& outputs);
 
   int num_inputs;
+  uint64_t time;
   function_list next_functions;
-  bool is_executable;
-  bool is_stochastic;
   std::vector<std::shared_ptr<FunctionPreHook>> pre_hooks;
   std::vector<std::shared_ptr<FunctionPostHook>> post_hooks;
 
@@ -169,45 +233,11 @@ struct Function : std::enable_shared_from_this<Function> {
   auto_unique_ptr<jit::tracer::FunctionTracingState> tracing_state;
 };
 
-// Actually what is a ForwardFunction here applies to all functions that are
-// applied only in forward OR are backward closures that don't save any Variables.
-// I chose this name, because the second situation is quite rare.
-template<bool transparent_state = false>
-struct ForwardFunction : public Function {
-  using Function::Function;
-
-  virtual inline std::unique_ptr<saved_variable_list> saved_variables() final {
-    return std::unique_ptr<saved_variable_list>(new saved_variable_list());
-  }
-
-  virtual inline bool is_traceable() final { return false; };
-
-  virtual inline bool passes_state_transparently() final { return transparent_state; };
-};
-
 // See Function::is_traceable() for definition.
 struct TraceableFunction : public Function {
   using Function::Function;
 
   virtual inline bool is_traceable() final { return true; };
-};
-
-template<typename T>
-struct apply_fn {
-  template<typename... Args>
-  apply_fn(Args&& ...args)
-    : fn_(std::make_shared<T>(std::forward<Args>(args)...)) {}
-
-  Variable operator()(const variable_list& inputs) {
-    return (*fn_)(inputs)[0];
-  }
-
-  template<typename... Args>
-  Variable operator()(Args&& ...inputs) {
-    return (*fn_)(variable_list{inputs...})[0];
-  }
-
-  std::shared_ptr<T> fn_;
 };
 
 }} // namespace torch::autograd

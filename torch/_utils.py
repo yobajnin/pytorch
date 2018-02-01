@@ -1,5 +1,6 @@
 import torch
 import importlib
+from collections import defaultdict
 
 
 def _type(self, new_type=None, async=False):
@@ -11,7 +12,7 @@ def _type(self, new_type=None, async=False):
 
     Args:
         new_type (type or string): The desired type
-        async (bool): If True, and the source is in pinned memory and
+        async (bool): If ``True``, and the source is in pinned memory and
                       destination is on the GPU or vice versa, the copy is
                       performed asynchronously with respect to the host.
                       Otherwise, the argument has no effect.
@@ -26,10 +27,12 @@ def _type(self, new_type=None, async=False):
     if self.is_sparse:
         if not new_type.is_sparse:
             raise RuntimeError("Cannot cast sparse tensor to dense tensor")
-        new_type_name = new_type.__module__ + '.' + new_type.__name__
-        new_values_type_name = new_type_name.replace('.sparse', '')
+        new_module_name = new_type.__module__.replace('.sparse', '')
+        new_values_type_name = new_module_name + '.' + new_type.__name__
         new_values = self._values().type(new_values_type_name, async)
-        return new_type(self._indices(), new_values, self.size())
+        new_indices_type_name = new_module_name + '.LongTensor'
+        new_indices = self._indices().type(new_indices_type_name, async)
+        return new_type(new_indices, new_values, self.size())
     if new_type.is_sparse:
         raise RuntimeError("Cannot cast dense tensor to sparse tensor")
     return new_type(self.size()).copy_(self, async)
@@ -43,7 +46,7 @@ def _cuda(self, device=None, async=False):
 
     Args:
         device (int): The destination GPU id. Defaults to the current device.
-        async (bool): If True and the source is in pinned memory, the copy will
+        async (bool): If ``True`` and the source is in pinned memory, the copy will
                       be asynchronous with respect to the host. Otherwise, the
                       argument has no effect.
     """
@@ -73,10 +76,6 @@ def _rebuild_tensor(storage, storage_offset, size, stride):
     return tensor_class().set_(storage, storage_offset, size, stride)
 
 
-def _range(*args, **kwargs):
-    return __builtins__['range'](*args, **kwargs)
-
-
 def _import_dotted_name(name):
     components = name.split('.')
     obj = __import__(components[0])
@@ -101,22 +100,55 @@ def _accumulate(iterable, fn=lambda x, y: x + y):
         yield total
 
 
-def _flatten_tensors(tensors):
-    """Flatten tensors into a single contiguous 1D buffer"""
+def _flatten_dense_tensors(tensors):
+    """Flatten dense tensors into a contiguous 1D buffer. Assume tensors are of
+    same dense type.
+
+    Since inputs are dense, the resulting tensor will be a concatenated 1D
+    buffer. Element-wise operation on this buffer will be equivalent to
+    operating individually.
+
+    Arguments:
+        tensors (Iterable[Tensor]): dense tensors to flatten.
+
+    Returns:
+        A contiguous 1D buffer containing input tensors.
+    """
     if len(tensors) == 1:
         return tensors[0].contiguous().view(-1)
-    numels = [tensor.numel() for tensor in tensors]
-    size = sum(numels)
-    offset = 0
-    flat = tensors[0].new(size)
-    for tensor, numel in zip(tensors, numels):
-        flat.narrow(0, offset, numel).copy_(tensor, broadcast=False)
-        offset += numel
+    flat = torch.cat([t.contiguous().view(-1) for t in tensors], dim=0)
     return flat
 
 
-def _unflatten_tensors(flat, tensors):
-    """View a flat buffer using the sizes of tensors"""
+def _flatten_sparse_tensors(tensors):
+    """Flatten sparse tensors into two contiguous 1D buffers, one of indices and
+    one of values. Assume tensors are of same sparse type.
+
+    Arguments:
+        tensors (Iterable[Tensor]): sparse tensors to flatten.
+
+    Returns:
+        A tuple of two contiguous 1D buffers, one containing input tensors'
+        indices and the other containing the values.
+    """
+    flat_indices = _flatten_dense_tensors([t._indices() for t in tensors])
+    flat_values = _flatten_dense_tensors([t._values() for t in tensors])
+    return flat_indices, flat_values
+
+
+def _unflatten_dense_tensors(flat, tensors):
+    """View a flat buffer using the sizes of tensors. Assume that tensors are of
+    same dense type, and that flat is given by _flatten_dense_tensors.
+
+    Arguments:
+        flat (Tensor): flattened dense tensors to unflatten.
+        tensors (Iterable[Tensor]): dense tensors whose sizes will be used to
+          unflatten flat.
+
+    Returns:
+        Unflattened dense tensors with sizes same as tensors and values from
+        flat.
+    """
     outputs = []
     offset = 0
     for tensor in tensors:
@@ -126,20 +158,130 @@ def _unflatten_tensors(flat, tensors):
     return tuple(outputs)
 
 
+def _unflatten_sparse_tensors(flat, tensors):
+    """View flat buffer (containing indices and values) using the sizes of
+    tensors. Assume that tensors are of same sparse type, and that flat is given
+    by _flatten_sparse_tensors.
+
+    Arguments:
+        flat (tuple(Tensor, Tensor)): flattened indices and values of sparse
+          tensors to unflatten.
+        tensors (Iterable[Tensor]): sparse tensors whose sizes will be used to
+          unflatten flat.
+
+    Returns:
+        Unflattened sparse tensors with sizes same as tensors and values from
+        flat.
+    """
+    flat_indices, flat_values = flat
+    indices = _unflatten_dense_tensors(flat_indices, [t._indices() for t in tensors])
+    values = _unflatten_dense_tensors(flat_values, [t._values() for t in tensors])
+    outputs = []
+    for t, i, v in zip(tensors, indices, values):
+        outputs.append(t.new(i, v, t.size()))
+    return tuple(outputs)
+
+
+def _reorder_tensors_as(tensors, ordered_tensors):
+    """Assume that tensors are of same order as ordered_tensors within their
+    types, e.g., from _take_tensors. Reorder them to be of same order as
+    ordered_tensors.
+
+    Arguments:
+        tensors (Iterable[Tensor]): tensors to be reordered. They should be of
+          the same order as ordered_tensors within their own types.
+        ordered_tensors (Iterable[Tensor]): tensors whose order will be the
+          reference.
+
+    Returns:
+        Ordered tuple of tensors with contents from tensors and order of
+        ordered_tensors.
+    """
+    type_dict = defaultdict(list)
+    for tensor in tensors:
+        type_dict[type(tensor)].append(tensor)
+    type_dict = {t: iter(coll) for t, coll in type_dict.items()}
+    return tuple(next(type_dict[type(tensor)]) for tensor in ordered_tensors)
+
+
 def _take_tensors(tensors, size_limit):
-    """Groups tensors into lists of up to size_limit bytes"""
-    buf = []
-    size = 0
-    last_type = type(tensors[0]) if len(tensors) > 0 else None
+    """Group tensors into chunks. This generator yields a chunk at each time,
+    each containing tensors of same type up to certain byte limit in total size.
+
+    Args:
+        tensors (Sequence): A sequence of tensors to be separated into chunks.
+        size_limit (int): The limit of each chunk in bytes.
+
+    Yields:
+        Blocks of tensors of same type and within size_limit. The yielded
+        tensors are only ordered as the original sequence within its types.
+    """
+    buf_dict = defaultdict(lambda: [[], 0])
     for tensor in tensors:
         t = type(tensor)
-        param_size = tensor.numel() * tensor.element_size()
-        if t is not last_type or (size + param_size > size_limit and size > 0):
+        if tensor.is_sparse:
+            indices = tensor._indices()
+            values = tensor._values()
+            size = indices.numel() * indices.element_size() + values.numel() * values.element_size()
+        else:
+            size = tensor.numel() * tensor.element_size()
+        buf_and_size = buf_dict[t]
+        if buf_and_size[1] + size > size_limit and buf_and_size[1] > 0:
+            yield buf_and_size[0]
+            buf_and_size = buf_dict[t] = [[], 0]
+        buf_and_size[0].append(tensor)
+        buf_and_size[1] += size
+    for buf, _ in buf_dict.values():
+        if len(buf) > 0:
             yield buf
-            last_type = t
-            size = 0
-            buf = []
-        buf.append(tensor)
-        size += param_size
-    if len(buf) > 0:
-        yield buf
+
+
+def _repeat(self, *sizes):
+    r"""Repeats this tensor along the specified dimensions.
+
+    Unlike :meth:`expand`, this function copies the tensor's data.
+
+    Args:
+        *sizes (torch.Size or int...): The number of times to repeat this
+            tensor along each dimension
+
+    Example:
+        >>> x = torch.Tensor([1, 2, 3])
+        >>> x.repeat(4, 2)
+         1  2  3  1  2  3
+         1  2  3  1  2  3
+         1  2  3  1  2  3
+         1  2  3  1  2  3
+        [torch.FloatTensor of size 4x6]
+        >>> x.repeat(4, 2, 1).size()
+        torch.Size([4, 2, 3])
+    """
+    # If args == (torch.Size,), then we need to unpack the tuple
+    if len(sizes) == 1 and isinstance(sizes[0], torch.Size):
+        sizes = sizes[0]
+
+    repeats = list(sizes)
+
+    if len(repeats) < self.dim():
+        raise ValueError('Number of dimensions of repeat dims can not be '
+                         'smaller than number of dimensions of tensor')
+
+    # Add new leading dimensions to the tensor if the
+    # number of target dimensions is larger than the
+    # number of source dimensions.
+    num_new_dimensions = len(repeats) - self.dim()
+    padded_size = [1] * num_new_dimensions + list(self.size())
+    target_size = torch.Size([a * b for a, b in zip(padded_size, repeats)])
+
+    xtensor = self.new().set_(self)
+    xtensor = xtensor.expand(padded_size)
+
+    result = self.new()
+    result.resize_(target_size)
+    urtensor = result.new(result)
+    for i in range(xtensor.dim()):
+        urtensor = urtensor.unfold(i, xtensor.size(i), xtensor.size(i))
+
+    urtensor.copy_(xtensor.expand_as(urtensor))
+
+    return result

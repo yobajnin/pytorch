@@ -16,21 +16,24 @@
 namespace torch { namespace autograd {
 
 struct InputBuffer {
-  explicit InputBuffer(size_t size);
+  explicit InputBuffer(size_t size)
+    : buffer(size) {}
   InputBuffer(const InputBuffer& other) = delete;
   InputBuffer(InputBuffer&& other) = default;
+  InputBuffer& operator=(InputBuffer&& other) = default;
 
   // Accumulates the variable at a specified index.
   void add(size_t idx, Variable var);
 
   int device() const;
 
+  Variable operator[](std::size_t pos) { return buffer[pos]; }
+
   // Returns the inputs as a list of variables. Destroys given InputBuffer.
   static std::vector<Variable> variables(InputBuffer&& buffer);
 
 private:
-  // (Variable, version at save)
-  std::vector<std::pair<Variable, int>> buffer;
+  std::vector<Variable> buffer;
 };
 
 }}  // namespace torch::autograd

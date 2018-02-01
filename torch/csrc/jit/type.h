@@ -2,7 +2,7 @@
 
 #include "torch/csrc/jit/interned_strings.h"
 #include "torch/csrc/jit/generic_if.h"
-#include "torch/csrc/jit/assert.h"
+#include "torch/csrc/assertions.h"
 
 #include <ATen/ATen.h>
 
@@ -12,7 +12,6 @@
 namespace torch { namespace jit {
 
 #define TH_FORALL_TYPES(_) \
-_(MultiType) \
 _(TensorType) \
 _(HandleType)
 
@@ -25,7 +24,7 @@ enum class TypeKind {
 struct Type;
 using TypePtr = std::shared_ptr<Type>;
 
-struct Type {
+struct Type : std::enable_shared_from_this<Type> {
 private:
   TypeKind kind_;
 
@@ -51,6 +50,9 @@ public:
     JIT_ASSERT(T::Kind == kind());
     return static_cast<T*>(this);
   }
+  std::shared_ptr<Type> asShared() {
+    return shared_from_this();
+  }
 };
 
 // This node represents a single Tensor value
@@ -59,10 +61,10 @@ struct TensorType : public Type {
   TensorType(const at::Tensor& tensor)
     : Type(TypeKind::TensorType)
     , scalar_type_(tensor.type().scalarType())
-    , device_(tensor.type().isCuda() ? tensor.get_device() : -1)
+    , device_(tensor.type().is_cuda() ? tensor.get_device() : -1)
     , sizes_(tensor.sizes())
     , strides_(tensor.strides()) {}
-  TensorType(at::ScalarType scalar_type, int device, std::vector<int64_t> sizes, std::vector<int64_t> strides)
+  TensorType(at::ScalarType scalar_type, int device, at::IntList sizes, at::IntList strides)
     : Type(TypeKind::TensorType)
     , scalar_type_(scalar_type)
     , device_(device)
@@ -77,36 +79,32 @@ struct TensorType : public Type {
   const std::vector<std::int64_t>& sizes() const { return sizes_; }
   const std::vector<std::int64_t>& strides() const { return strides_; }
 
-  TypePtr withSizesStrides(const std::vector<std::int64_t>& sizes, const std::vector<std::int64_t>& strides) const {
+  TypePtr withSizesStrides(at::IntList sizes, at::IntList strides) const {
     return std::make_shared<TensorType>(scalar_type_, device_, sizes, strides);
+  }
+
+  TypePtr withSizes(at::IntList sizes) const {
+    return withSizesStrides(sizes, contiguousStridesOf(sizes));
   }
 
   TypePtr contiguous() const {
     auto t = std::make_shared<TensorType>(*this);
-    t->strides_.resize(sizes_.size());
-    t->strides_.back() = 1;
-    for(size_t i = t->strides_.size() - 1; i > 0; i--) {
-      t->strides_[i-1] = t->strides_[i] * t->sizes_[i];
-    }
+    t->strides_ = contiguousStridesOf(sizes_);
     return t;
   }
 private:
+  std::vector<int64_t> contiguousStridesOf(at::IntList sizes) const {
+    std::vector<int64_t> strides(sizes.size());
+    strides.back() = 1;
+    for(std::size_t i = strides.size() - 1; i > 0; i--) {
+      strides[i-1] = strides[i] * sizes[i];
+    }
+    return strides;
+  }
   at::ScalarType scalar_type_;
   int device_;
   std::vector<int64_t> sizes_;
   std::vector<int64_t> strides_;
-};
-
-// Type of multireturn nodes. Note that it doesn't mean that they must always
-// have multiple outputs, but each output will be represented with a select node.
-struct MultiType : public Type {
-  friend struct Type;
-
-  MultiType()
-    : Type(TypeKind::MultiType) {}
-
-public:
-  static const TypeKind Kind = TypeKind::MultiType;
 };
 
 // This value represents an opaque handle to external state.
@@ -135,11 +133,6 @@ struct HandleType : public Type {
 public:
   static const TypeKind Kind = TypeKind::HandleType;
 };
-
-inline TypePtr multiType() {
-  static TypePtr multiType = std::make_shared<MultiType>();
-  return multiType;
-}
 
 std::ostream& operator<<(std::ostream & out, const Type & t);
 

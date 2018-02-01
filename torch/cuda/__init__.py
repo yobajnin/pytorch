@@ -1,4 +1,4 @@
-"""
+r"""
 This package adds support for CUDA tensor types, that implement the same
 function as CPU tensors, but they utilize GPUs for computation.
 
@@ -14,7 +14,9 @@ import ctypes
 import os
 import torch
 import traceback
+import warnings
 from torch._six import raise_from
+from subprocess import Popen, PIPE
 from multiprocessing.util import register_after_fork as _register_after_fork
 
 _initialized = False
@@ -24,8 +26,23 @@ _original_pid = False
 _cudart = None
 
 
+def find_cuda_windows_lib():
+    proc = Popen(['where', 'cudart64*.dll'], stdout=PIPE, stderr=PIPE)
+    out, err = proc.communicate()
+    out = out.decode().strip()
+    if len(out) > 0:
+        if out.find('\r\n') != -1:
+            out = out.split('\r\n')[0]
+        cuda_lib_name = os.path.basename(out)
+        cuda_lib = os.path.splitext(cuda_lib_name)[0]
+        cuda_lib = str(cuda_lib)
+        return ctypes.cdll.LoadLibrary(cuda_lib)
+    else:
+        return None
+
+
 def is_available():
-    """Returns a bool indicating if CUDA is currently available."""
+    r"""Returns a bool indicating if CUDA is currently available."""
     if (not hasattr(torch._C, '_cuda_isDriverSufficient') or
             not torch._C._cuda_isDriverSufficient()):
         return False
@@ -38,7 +55,10 @@ def _sleep(cycles):
 
 def _load_cudart():
     # First check the main program for CUDA symbols
-    lib = ctypes.cdll.LoadLibrary(None)
+    if platform.system() == 'Windows':
+        lib = find_cuda_windows_lib()
+    else:
+        lib = ctypes.cdll.LoadLibrary(None)
     if hasattr(lib, 'cudaGetErrorName'):
         return lib
 
@@ -65,9 +85,27 @@ http://www.nvidia.com/Download/index.aspx""")
 The NVIDIA driver on your system is too old (found version {}).
 Please update your GPU driver by downloading and installing a new
 version from the URL: http://www.nvidia.com/Download/index.aspx
-Alternatively, go to: https://pytorch.org/binaries to install
+Alternatively, go to: http://pytorch.org to install
 a PyTorch version that has been compiled with your version
 of the CUDA driver.""".format(str(torch._C._cuda_getDriverVersion())))
+
+
+def _check_capability():
+    error_str = """
+    Found GPU%d %s which requires CUDA_VERSION >= %d for
+     optimal performance and fast startup time, but your PyTorch was compiled
+     with CUDA_VERSION %d. Please install the correct PyTorch binary
+     using instructions from http://pytorch.org
+    """
+
+    CUDA_VERSION = torch._C._cuda_getCompiledVersion()
+    for d in range(device_count()):
+        major = get_device_capability(d)[0]
+        name = get_device_name(d)
+        if CUDA_VERSION < 8000 and major >= 6:
+            warnings.warn(error_str % (d, name, 8000, CUDA_VERSION))
+        elif CUDA_VERSION < 9000 and major >= 7:
+            warnings.warn(error_str % (d, name, 9000, CUDA_VERSION))
 
 
 def _lazy_call(callable):
@@ -77,9 +115,24 @@ def _lazy_call(callable):
         # Don't store the actual traceback to avoid memory cycle
         _queued_calls.append((callable, traceback.format_stack()))
 
+_lazy_call(_check_capability)
+
 
 class DeferredCudaCallError(Exception):
     pass
+
+
+def init():
+    r"""Initialize PyTorch's CUDA state.  You may need to call
+    this explicitly if you are interacting with PyTorch via
+    its C API, as Python bindings for CUDA functionality will not
+    be until this initialization takes place.  Ordinary users
+    should not need this, as all of PyTorch's CUDA methods
+    automatically initialize CUDA state on-demand.
+
+    Does nothing if the CUDA state is already initialized.
+    """
+    _lazy_init()
 
 
 def _lazy_init():
@@ -148,7 +201,7 @@ def check_error(res):
 
 
 class device(object):
-    """Context-manager that changes the selected device.
+    r"""Context-manager that changes the selected device.
 
     Arguments:
         idx (int): device index to select. It's a no-op if this argument
@@ -162,10 +215,10 @@ class device(object):
     def __enter__(self):
         if self.idx is -1:
             return
-        _lazy_init()
         self.prev_idx = torch._C._cuda_getDevice()
         if self.prev_idx != self.idx:
             torch._C._cuda_setDevice(self.idx)
+        _lazy_init()
 
     def __exit__(self, *args):
         if self.prev_idx != self.idx:
@@ -174,7 +227,7 @@ class device(object):
 
 
 class device_of(device):
-    """Context-manager that changes the current device to that of given object.
+    r"""Context-manager that changes the current device to that of given object.
 
     You can use both tensors and storages as arguments. If a given object is
     not allocated on a GPU, this is a no-op.
@@ -189,7 +242,7 @@ class device_of(device):
 
 
 def set_device(device):
-    """Sets the current device.
+    r"""Sets the current device.
 
     Usage of this function is discouraged in favor of :any:`device`. In most
     cases it's better to use ``CUDA_VISIBLE_DEVICES`` environmental variable.
@@ -203,7 +256,7 @@ def set_device(device):
 
 
 def get_device_name(device):
-    """Gets the name of a device.
+    r"""Gets the name of a device.
 
     Arguments:
         device (int): device for which to return the name. This function is a
@@ -213,9 +266,22 @@ def get_device_name(device):
         return torch._C._cuda_getDeviceName(device)
 
 
+def get_device_capability(device):
+    r"""Gets the cuda capability of a device.
+
+    Arguments:
+        device (int): device for which to return the name. This function is a
+            no-op if this argument is negative.
+    Returns:
+        tuple(int, int): the major and minor cuda capability of the device
+    """
+    if device >= 0:
+        return torch._C._cuda_getDeviceCapability(device)
+
+
 @contextlib.contextmanager
 def stream(stream):
-    """Context-manager that selects a given stream.
+    r"""Context-manager that selects a given stream.
 
     All CUDA kernels queued within its context will be enqueued on a selected
     stream.
@@ -223,6 +289,10 @@ def stream(stream):
     Arguments:
         stream (Stream): selected stream. This manager is a no-op if it's
             ``None``.
+
+    .. note:: Streams are per-device, and this function changes the "current
+       stream" only for the currently selected device.  It is illegal to select
+       a stream that belongs to a different device.
     """
     if stream is None:
         yield
@@ -238,33 +308,125 @@ def stream(stream):
 def device_count():
     """Returns the number of GPUs available."""
     if is_available():
-        _lazy_init()
         return torch._C._cuda_getDeviceCount()
     else:
         return 0
 
 
 def current_device():
-    """Returns the index of a currently selected device."""
+    r"""Returns the index of a currently selected device."""
     _lazy_init()
     return torch._C._cuda_getDevice()
 
 
 def synchronize():
-    """Waits for all kernels in all streams on current device to complete."""
+    r"""Waits for all kernels in all streams on current device to complete."""
     _lazy_init()
     return torch._C._cuda_synchronize()
 
 
 def current_stream():
-    """Returns a currently selected :class:`Stream`."""
+    r"""Returns a currently selected :class:`Stream`."""
     _lazy_init()
     return torch.cuda.Stream(_cdata=torch._C._cuda_getCurrentStream())
 
 
 def current_blas_handle():
-    """Returns cublasHandle_t pointer to current cuBLAS handle"""
+    r"""Returns cublasHandle_t pointer to current cuBLAS handle"""
+    _lazy_init()
     return torch._C._cuda_getCurrentBlasHandle()
+
+
+def empty_cache():
+    r"""Releases all unoccupied cached memory currently held by the caching
+    allocator so that those can be used in other GPU application and visible in
+    `nvidia-smi`.
+
+    .. note::
+        :meth:`~torch.cuda.empty_cache` doesn't increase the amount of GPU
+        memory available for PyTorch. See :ref:`cuda-memory-management` for
+        more details about GPU memory management.
+    """
+    if _initialized:
+        torch._C._cuda_emptyCache()
+
+
+def memory_allocated(device=None):
+    r"""Returns the current GPU memory usage by tensors in bytes for a given
+    device.
+
+    Arguments:
+        device (int, optional): selected device. Returns statistic for the
+                                current device, given by
+                                :meth:`~torch.cuda.current_device`, if
+                                :attr:`device` is ``None`` (default).
+
+    .. note::
+        This is likely less than the amount shown in `nvidia-smi` since some
+        unused memory can be held by the caching allocator and some context
+        needs to be created on GPU. See :ref:`cuda-memory-management` for more
+        details about GPU memory management.
+    """
+    if device is None:
+        device = current_device()
+    return torch._C._cuda_memoryAllocated(device)
+
+
+def max_memory_allocated(device=None):
+    r"""Returns the maximum GPU memory usage by tensors in bytes for a given
+    device.
+
+    Arguments:
+        device (int, optional): selected device. Returns statistic for the
+                                current device, given by
+                                :meth:`~torch.cuda.current_device`, if
+                                :attr:`device` is ``None`` (default).
+
+    .. note::
+        See :ref:`cuda-memory-management` for more details about GPU memory
+        management.
+    """
+    if device is None:
+        device = current_device()
+    return torch._C._cuda_maxMemoryAllocated(device)
+
+
+def memory_cached(device=None):
+    r"""Returns the current GPU memory managed by the caching allocator in bytes
+    for a given device.
+
+    Arguments:
+        device (int, optional): selected device. Returns statistic for the
+                                current device, given by
+                                :meth:`~torch.cuda.current_device`, if
+                                :attr:`device` is ``None`` (default).
+
+    .. note::
+        See :ref:`cuda-memory-management` for more details about GPU memory
+        management.
+    """
+    if device is None:
+        device = current_device()
+    return torch._C._cuda_memoryCached(device)
+
+
+def max_memory_cached(device=None):
+    r"""Returns the maximum GPU memory managed by the caching allocator in bytes
+    for a given device.
+
+    Arguments:
+        device (int, optional): selected device. Returns statistic for the
+                                current device, given by
+                                :meth:`~torch.cuda.current_device`, if
+                                :attr:`device` is ``None`` (default).
+
+    .. note::
+        See :ref:`cuda-memory-management` for more details about GPU memory
+        management.
+    """
+    if device is None:
+        device = current_device()
+    return torch._C._cuda_maxMemoryCached(device)
 
 
 def _host_allocator():
@@ -461,6 +623,12 @@ torch._tensor_classes.add(ShortTensor)
 torch._tensor_classes.add(CharTensor)
 torch._tensor_classes.add(ByteTensor)
 torch._tensor_classes.add(HalfTensor)
+
+torch._integer_tensor_classes.add(LongTensor)
+torch._integer_tensor_classes.add(IntTensor)
+torch._integer_tensor_classes.add(ShortTensor)
+torch._integer_tensor_classes.add(CharTensor)
+torch._integer_tensor_classes.add(ByteTensor)
 
 from . import sparse
 from . import profiler

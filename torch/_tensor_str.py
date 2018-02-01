@@ -1,11 +1,7 @@
 import math
 import torch
 from functools import reduce
-from ._utils import _range
 from sys import float_info
-
-
-__MIN_LOG_SCALE = math.ceil(math.log(float_info.min * float_info.epsilon, 10))
 
 
 class __PrinterOptions(object):
@@ -69,7 +65,15 @@ def set_printoptions(
         PRINT_OPTS.linewidth = linewidth
 
 
+def _get_min_log_scale():
+    min_positive = float_info.min * float_info.epsilon  # get smallest denormal
+    if min_positive == 0:  # use smallest normal if DAZ/FTZ is set
+        min_positive = float_info.min
+    return math.ceil(math.log(min_positive, 10))
+
+
 def _number_format(tensor, min_sz=-1):
+    _min_log_scale = _get_min_log_scale()
     min_sz = max(min_sz, 2)
     tensor = torch.DoubleTensor(tensor.size()).copy_(tensor).abs_().view(tensor.nelement())
 
@@ -123,7 +127,7 @@ def _number_format(tensor, min_sz=-1):
         else:
             if exp_max > prec + 1 or exp_max < 0:
                 sz = max(min_sz, 7)
-                scale = math.pow(10, max(exp_max - 1, __MIN_LOG_SCALE))
+                scale = math.pow(10, max(exp_max - 1, _min_log_scale))
             else:
                 if exp_max == 0:
                     sz = 7
@@ -154,7 +158,7 @@ def _tensor_str(self):
     while True:
         nrestarted = [False for i in counter]
         nskipped = [False for i in counter]
-        for i in _range(counter_dim - 1, -1, -1):
+        for i in range(counter_dim - 1, -1, -1):
             counter[i] += 1
             if print_dots and counter[i] == n and self.size(i) > 2 * n:
                 counter[i] = self.size(i) - n
@@ -225,7 +229,7 @@ def _matrix_str(self, indent='', formatter=None, force_truncate=False):
                     firstColumn, lastColumn, indent)
             if scale != 1:
                 strt += SCALE_FORMAT.format(scale)
-            for l in _range(self.size(0)):
+            for l in range(self.size(0)):
                 strt += indent + (' ' if scale != 1 else '')
                 row_slice = self[l, firstColumn:lastColumn + 1]
                 strt += ' '.join(fmt.format(val / scale) for val in row_slice)
@@ -283,9 +287,9 @@ def _vector_str(self):
                 '\n')
 
 
-def _str(self):
+def _str(self, include_footer=True):
     if self.ndimension() == 0:
-        return '[{} with no dimension]\n'.format(torch.typename(self))
+        strt = ''
     elif self.ndimension() == 1:
         strt = _vector_str(self)
     elif self.ndimension() == 2:
@@ -293,9 +297,11 @@ def _str(self):
     else:
         strt = _tensor_str(self)
 
-    size_str = 'x'.join(str(size) for size in self.size())
-    device_str = '' if not self.is_cuda else \
-        ' (GPU {})'.format(self.get_device())
-    strt += '[{} of size {}{}]\n'.format(torch.typename(self),
-                                         size_str, device_str)
+    if include_footer:
+        size_str = 'x'.join(str(size) for size in self.size())
+        size_str_prefix = 'of size ' if self.ndimension() > 0 else 'with no dimension'
+        device_str = '' if not self.is_cuda else \
+            ' (GPU {})'.format(self.get_device())
+        strt += '[{} {}{}{}]\n'.format(torch.typename(self), size_str_prefix,
+                                       size_str, device_str)
     return '\n' + strt

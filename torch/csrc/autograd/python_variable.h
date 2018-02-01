@@ -5,6 +5,7 @@
 #include <ATen/ATen.h>
 
 #include "torch/csrc/autograd/variable.h"
+#include "torch/csrc/THP_export.h"
 
 // Python object that backs torch.autograd.Variable
 struct THPVariable {
@@ -21,12 +22,9 @@ struct THPVariable {
     PyObject* backward_hooks;
 };
 
-extern PyObject *THPVariableClass;
+THP_API PyObject *THPVariableClass;
 
 bool THPVariable_initModule(PyObject *module);
-PyObject * THPVariable_NewVolatile(PyObject *data);
-PyObject * THPVariable_NewLeaf(PyObject *data);
-PyObject * THPVariable_NewWithFunction(PyObject *data, const std::shared_ptr<torch::autograd::Function>& var);
 PyObject * THPVariable_Wrap(torch::autograd::Variable var);
 PyObject * THPVariable_get_data(THPVariable *self);
 

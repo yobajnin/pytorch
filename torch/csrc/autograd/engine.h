@@ -27,32 +27,21 @@ struct Engine {
   virtual ~Engine();
 
   using ready_queue_type = std::deque<std::pair<std::shared_ptr<Function>, InputBuffer>>;
-  using function_queue = std::vector<Function*>;
   using dependencies_type = std::unordered_map<Function*, int>;
-
-  using pre_callback_type = std::function<bool (Function*, variable_list&)>;
-  using pre_callback_map = std::unordered_multimap<Function*, pre_callback_type>;
-  using post_callback_type = std::function<bool (Function*, variable_list&, variable_list&)>;
-  using post_callback_map = std::unordered_multimap<Function*, post_callback_type>;
 
   // Given a list of (Function, input number) pairs computes the value of the graph
   // by following next_function references.
-  virtual void execute(
+  virtual variable_list execute(
       const function_list& roots,
       const variable_list& inputs,
       bool keep_graph,
-      const pre_callback_map& pre_callbacks = pre_callback_map(),
-      const post_callback_map& post_callbacks = post_callback_map());
+      bool create_graph,
+      const function_list& outputs = {});
 
   void queue_callback(std::function<void()> callback);
 
 protected:
-  function_queue find_roots(
-      const function_list& roots,
-      variable_list& inputs,
-      GraphTask& task);
-  void find_stochastic_functions(function_queue& queue, Function* graph_root, GraphTask& task);
-  void compute_dependencies(function_queue queue, GraphTask& task);
+  void compute_dependencies(Function* root, GraphTask& task);
   void evaluate_function(FunctionTask& task);
   ReadyQueue& ready_queue(int device);
   void start_threads();
