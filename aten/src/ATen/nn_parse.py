@@ -66,7 +66,7 @@ def output_arguments(thnn_function):
     def is_output_arg(arg_name, func_name):
         if arg_name == 'output' and 'updateOutput' in cname:
             return True
-        if name in {'gradInput', 'gradWeight', 'gradBias'}:
+        if name in {'gradInput', 'gradWeight', 'gradBias', 'gradGrid'}:
             return True
         if arg_name == 'indices' and 'updateOutput' in cname and 'Unpool' not in cname:
             # indices is an output argument in pooling and an input in unpooling
@@ -286,18 +286,22 @@ def backward_declaration(base, thnn_functions):
                   if arg['name'] != 'inplace']
     arguments += base['buffers']
 
+    if 'upsample' in base['name']:
+        # Add input_size as parameter to upsample backwards functions
+        # Note that input_size is 4-dim for upsample_xxx2d
+        size = 2 + int(re.search(r'(\d+)d', base['name']).group(1))
+        input_size_arg = {'type': 'IntList', 'name': 'input_size', 'size': size}
+        for output_size_idx, arg in enumerate(arguments):
+            if arg['name'] == 'output_size':
+                break
+        arguments.insert(output_size_idx + 1, input_size_arg)
+
     # outputs from the forward may be inputs to the backwards
     for arg in arguments:
         if 'output' in arg:
             del arg['output']
 
     arguments += unique_args([output_arguments(f) for f in thnn_functions])
-
-    if 'upsample' in base['name']:
-        # Add input_size as parameter to upsample backwards functions
-        # Note that input_size is 4-dim for upsample_xxx2d
-        size = 2 + int(re.search(r'(\d+)d', base['name']).group(1))
-        arguments.append({'type': 'IntList', 'name': 'input_size', 'size': size})
 
     def initialize_output_arg(arg):
         # the mask array<bool, N> specifies which return values to compute
@@ -314,10 +318,14 @@ def backward_declaration(base, thnn_functions):
             arg['zero'] = True
 
     is_batch_norm_backward = '_backward' in thnn_functions[0].name
+    grad_params = []
     if len(thnn_functions) > 1 or is_batch_norm_backward:
         for arg in arguments:
             if arg.get('output', False):
                 initialize_output_arg(arg)
+            if 'Tensor' in arg['type'] and arg['name'].startswith('grad_') and \
+                    'input' not in arg['name'] and 'output' not in arg['name']:
+                grad_params.append(arg['name'])
 
     thnn_args = [get_thnn_args(f, arguments, False) for f in thnn_functions]
     arguments = remove_unused_args(arguments, unique_args(thnn_args))
@@ -328,7 +336,7 @@ def backward_declaration(base, thnn_functions):
         if '_updateGradInput' in func.name:
             return 'grad_input_'
         if '_accGradParameters' in func.name:
-            return 'grad_weight_'
+            return ' || '.join(p + '_' for p in grad_params)
         return None
 
     for func, args in zip(thnn_functions, thnn_args):
@@ -346,8 +354,8 @@ def backward_declaration(base, thnn_functions):
             pass
         else:
             base_name = arg['name'][len('grad_'):] if arg['name'] != 'grad_input' else 'self'
-            if base_name in [arg['name'] for arg in arguments]:
-                scalar_check[arg['name']] = base_name + '_->isScalar()'
+            if base_name in [a['name'] for a in arguments]:
+                scalar_check[arg['name']] = base_name + '_->dim() == 0'
             else:
                 raise ValueError(("Could not infer scalar_check for {} argument of func {} because {} "
                                   "does not exist.  Please explicitly specify scalar_check."

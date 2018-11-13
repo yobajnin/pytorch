@@ -1,35 +1,15 @@
 #ifndef TH_RANDOM_INC
 #define TH_RANDOM_INC
 
-#include "THGeneral.h"
-
-#include <mutex>
+#include <TH/THGeneral.h>
 
 #define _MERSENNE_STATE_N 624
 #define _MERSENNE_STATE_M 397
 
-typedef struct THGeneratorState {
-  /* The initial seed. */
-  uint64_t the_initial_seed;
-  int left;  /* = 1; */
-  int seeded; /* = 0; */
-  uint64_t next;
-  uint64_t state[_MERSENNE_STATE_N]; /* the array for the state vector  */
-
-  /********************************/
-
-  /* For normal distribution */
-  double normal_x;
-  double normal_y;
-  double normal_rho;
-  int normal_is_valid; /* = 0; */
-} THGeneratorState;
-
-/* A THGenerator contains all the state required for a single random number stream */
-typedef struct THGenerator {
-  std::mutex mutex; /* mutex for using this generator */
-  THGeneratorState gen_state;
-} THGenerator;
+/* Struct definition is moved to THGenerator.hpp, because THRandom.h
+needs to be C-compatible in order to be included in C FFI extensions. */
+typedef struct THGenerator THGenerator;
+typedef struct THGeneratorState THGeneratorState;
 
 #define torch_Generator "torch.Generator"
 
@@ -80,12 +60,6 @@ TH_API double THRandom_normal(THGenerator *_generator, double mean, double stdv)
 */
 TH_API double THRandom_exponential(THGenerator *_generator, double lambda);
 
-/** Generates a random number from a standard Gamma distribution.
-    The Gamma density is proportional to $x^{alpha-1} exp(-x)$
-    The shape parameter alpha (a.k.a. k) is a positive real number.
-*/
-TH_API double THRandom_standard_gamma(THGenerator *_generator, double alpha);
-
 /** Returns a random number from a Cauchy distribution.
     The Cauchy density is $p(x) = sigma/(pi*(sigma^2 + (x-median)^2))$
 */
@@ -103,6 +77,10 @@ TH_API double THRandom_logNormal(THGenerator *_generator, double mean, double st
 */
 TH_API int THRandom_geometric(THGenerator *_generator, double p);
 
-/* Returns true with probability $p$ and false with probability $1-p$ (p > 0). */
+/* Returns true with double probability $p$ and false with probability $1-p$ (p > 0). */
 TH_API int THRandom_bernoulli(THGenerator *_generator, double p);
+
+/* Returns true with float probability $p$ and false with probability $1-p$ (p > 0). */
+TH_API int THRandom_bernoulliFloat(THGenerator *_generator, float p);
+
 #endif

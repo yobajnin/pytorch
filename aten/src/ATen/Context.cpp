@@ -2,18 +2,20 @@
 
 #include "Context.h"
 
+#include <ATen/core/TensorOptions.h>
+
 #include <thread>
 #include <mutex>
 #include <sstream>
 #include <string>
 #include <stdexcept>
 
-#if AT_CUDA_ENABLED()
-#include <cuda.h>
-#include "THC/THC.h"
-#include "ATen/CUDAGenerator.h"
-#endif
 #include "ATen/CPUGenerator.h"
+#include "ATen/RegisterCPU.h"
+#include "ATen/Tensor.h"
+#include <ATen/cpu/FlushDenormal.h>
+
+#include "TH/TH.h"  // for USE_LAPACK
 
 namespace at {
 
@@ -27,32 +29,19 @@ static inline void argErrorHandler(int arg, const char * msg, void * data) {
 }
 
 Context::Context()
-: thc_state(nullptr) {
+: next_id(static_cast<size_t>(TypeID::NumOptions))
+, thc_state(nullptr, [](THCState* p){ /* no-op */ } ) {
 
   THSetDefaultErrorHandler(errorHandler,nullptr);
   THSetDefaultArgErrorHandler(argErrorHandler,nullptr);
 
-  generator_registry[static_cast<int>(Backend::CPU)]
+  generator_registry[static_cast<int>(DeviceType::CPU)]
     .reset(new CPUGenerator(this));
-  Type::registerAll(this);
-}
-void Context::doInitCUDA() {
-#if AT_CUDA_ENABLED()
-  thc_state = THCState_alloc();
-  THCState_setDeviceAllocator(thc_state, THCCachingAllocator_get());
-  thc_state->cudaHostAllocator = &THCCachingHostAllocator;
-  THCudaInit(thc_state);
-  generator_registry[static_cast<int>(Backend::CUDA)]
-    .reset(new CUDAGenerator(this));
-#endif
-}
-Context::~Context() {
-#if AT_CUDA_ENABLED()
-  if(thc_state)
-    THCState_free(thc_state);
-#endif
+  register_cpu_types(this);
 }
 
+// TODO: This could be bad juju if someone calls globalContext() in the
+// destructor of an object with static lifetime.
 Context & globalContext() {
   static Context globalContext_;
   return globalContext_;
@@ -85,37 +74,57 @@ void Context::setBenchmarkCuDNN(bool b) {
   benchmark_cudnn = b;
 }
 
-bool Context::hasCUDA() const {
-#if AT_CUDA_ENABLED()
-  int count;
-  cudaError_t err = cudaGetDeviceCount(&count);
-  if (err == cudaErrorInsufficientDriver) {
-    return false;
-  }
+bool Context::hasMKL() const {
+#if AT_MKL_ENABLED()
   return true;
 #else
   return false;
 #endif
 }
 
-#if AT_CUDA_ENABLED()
-cudaStream_t Context::getCurrentCUDAStream() const {
-  return THCState_getCurrentStream(thc_state);
-}
-struct cudaDeviceProp* Context::getCurrentDeviceProperties() const {
-  return THCState_getCurrentDeviceProperties(thc_state);
-}
+bool Context::hasLAPACK() const {
+#ifdef USE_LAPACK
+  return true;
+#else
+  return false;
 #endif
+}
 
-int64_t Context::current_device() const {
-#if AT_CUDA_ENABLED()
-  int device;
-  cudaError_t err = cudaGetDevice(&device);
-  if (err == cudaSuccess) {
-    return device;
-  }
-#endif
-  return -1;
+bool Context::setFlushDenormal(bool on) {
+  return at::cpu::set_flush_denormal(on);
 }
+
+TypeExtendedInterface& getType(TensorOptions options) {
+  return globalContext().getType(
+            options.backend(), typeMetaToScalarType(options.dtype()), options.is_variable());
+}
+
+TypeExtendedInterface& getType(const TensorImpl* impl) {
+  Backend backend = tensorTypeIdToBackend(impl->type_id());
+  return globalContext().getType(
+            backend, typeMetaToScalarType(impl->dtype()), impl->is_variable());
+}
+
+TypeExtendedInterface& getType(const Tensor& t) {
+  return getType(t.unsafeGetTensorImpl());
+}
+
+Allocator* getCPUAllocator() {
+  return getTHDefaultAllocator();
+}
+
+struct LegacyTypeInit : public LegacyTypeInitInterface {
+  LegacyTypeInit(LegacyTypeInitArgs) {}
+  void initCPU() const override {
+    globalContext();
+  }
+  void initCUDA() const override {
+    globalContext().lazyInitCUDA();
+  }
+  void initComplex() const override {
+    globalContext().lazyInitComplex();
+  }
+};
+REGISTER_LEGACY_TYPE_INIT(LegacyTypeInit);
 
 }

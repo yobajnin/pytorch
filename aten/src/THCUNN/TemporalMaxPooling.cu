@@ -1,8 +1,10 @@
 #include "THCUNN.h"
 #include "common.h"
-#include "THCHalf.h"
+#include "TH/THHalf.h"
 #include "THCHalfAutoNumerics.cuh"
 #include "THCAtomics.cuh"
+#include "THCTensor.hpp"
+#include "THCStorage.hpp"
 
 #define TEMPORAL_MAX_POOLING_THREADS 1024
 

@@ -35,21 +35,21 @@
   int64_t *TENSOR##_counter = NULL, *TENSOR##_sizes = NULL, *TENSOR##_strides = NULL, *TENSOR##_dimOffset = NULL; \
   int64_t TENSOR##_stride = 0, TENSOR##_size = 0, TENSOR##_dim = 0, TENSOR##_i, TENSOR##_n; \
   int TENSOR##_contiguous = ALLOW_CONTIGUOUS && DIM < 0; \
-  TENSOR##_n = (TENSOR->nDimension ? 1 : 0); \
-  for(TENSOR##_i = 0; TENSOR##_i < TENSOR->nDimension; TENSOR##_i++) \
-    TENSOR##_n *= TENSOR->size[TENSOR##_i]; \
+  TENSOR##_n = 1; \
+  for(TENSOR##_i = 0; TENSOR##_i < TENSOR->dim(); TENSOR##_i++) \
+    TENSOR##_n *= TENSOR->size(TENSOR##_i); \
 \
-  if(TENSOR->nDimension == 0) \
+  if(TENSOR->is_empty()) \
     TH_TENSOR_APPLY_hasFinished = 1; \
   else \
   { \
-    TENSOR##_data = TENSOR->storage->data+TENSOR->storageOffset; \
+    TENSOR##_data = THTensor_getStoragePtr(TENSOR)->data<TYPE>()+TENSOR->storage_offset(); \
     TENSOR##_size = 1; \
     TENSOR##_stride = 1; \
-    for(TENSOR##_i = TENSOR->nDimension-1; TENSOR##_i >= 0; TENSOR##_i--) { \
-      if(TENSOR->size[TENSOR##_i] != 1) { \
-        if(TENSOR->stride[TENSOR##_i] == TENSOR##_size && TENSOR##_i != DIM) \
-          TENSOR##_size *= TENSOR->size[TENSOR##_i]; \
+    for(TENSOR##_i = THTensor_nDimensionLegacyAll(TENSOR)-1; TENSOR##_i >= 0; TENSOR##_i--) { \
+      if(THTensor_sizeLegacyNoScalars(TENSOR, TENSOR##_i) != 1) { \
+        if(THTensor_strideLegacyNoScalars(TENSOR, TENSOR##_i) == TENSOR##_size && TENSOR##_i != DIM) \
+          TENSOR##_size *= THTensor_sizeLegacyNoScalars(TENSOR, TENSOR##_i); \
         else{ \
           TENSOR##_contiguous = 0; \
           break; \
@@ -59,9 +59,9 @@
     if (!TENSOR##_contiguous) { \
       /* Find the dimension of contiguous sections */ \
       TENSOR##_dim = 1; \
-      for(TENSOR##_i = TENSOR->nDimension-2; TENSOR##_i >= 0; TENSOR##_i--) \
+      for(TENSOR##_i = THTensor_nDimensionLegacyAll(TENSOR)-2; TENSOR##_i >= 0; TENSOR##_i--) \
       { \
-        if(TENSOR->stride[TENSOR##_i] != TENSOR->stride[TENSOR##_i+1] * TENSOR->size[TENSOR##_i+1] || TENSOR##_i == DIM || TENSOR##_i+1 == DIM) \
+        if(TENSOR->stride(TENSOR##_i) != TENSOR->stride(TENSOR##_i+1) * TENSOR->size(TENSOR##_i+1) || TENSOR##_i == DIM || TENSOR##_i+1 == DIM) \
           TENSOR##_dim++; \
       } \
       /* Allocate an array of 3*dim elements, where dim is the number of contiguous sections */ \
@@ -69,24 +69,24 @@
       TENSOR##_sizes = TENSOR##_counter + TENSOR##_dim; \
       TENSOR##_strides = TENSOR##_counter + 2*TENSOR##_dim; \
       TH_TENSOR_dim_index = TENSOR##_dim-1; \
-      TENSOR##_dimOffset = (DIM == TENSOR->nDimension-1) ? &TENSOR##_i : &TENSOR##_counter[DIM]; \
-      TENSOR##_sizes[TH_TENSOR_dim_index] = TENSOR->size[TENSOR->nDimension-1]; \
-      TENSOR##_strides[TH_TENSOR_dim_index] = TENSOR->stride[TENSOR->nDimension-1]; \
+      TENSOR##_dimOffset = (DIM == THTensor_nDimensionLegacyAll(TENSOR)-1) ? &TENSOR##_i : &TENSOR##_counter[DIM]; \
+      TENSOR##_sizes[TH_TENSOR_dim_index] = THTensor_sizeLegacyNoScalars(TENSOR, THTensor_nDimensionLegacyAll(TENSOR)-1); \
+      TENSOR##_strides[TH_TENSOR_dim_index] = THTensor_strideLegacyNoScalars(TENSOR, THTensor_nDimensionLegacyAll(TENSOR)-1); \
       /* TENSOR##_counter tracks where we are in the storage. The offset into the */ \
       /* storage is given by storage_offset + (i * j), where i is the stride */ \
       /* vector and j is tensor_counter vector. This sets the starting position for the loop. */ \
       for(TENSOR##_i = TENSOR##_dim-1; TENSOR##_i >= 0; --TENSOR##_i) { \
         TENSOR##_counter[TENSOR##_i] = 0; \
       } \
-      for(TENSOR##_i = TENSOR->nDimension-2; TENSOR##_i >= 0; --TENSOR##_i) { \
-        if (TENSOR->stride[TENSOR##_i] == TENSOR->stride[TENSOR##_i+1] * TENSOR->size[TENSOR##_i+1] && TENSOR##_i != DIM && TENSOR##_i+1 != DIM) { \
-          TENSOR##_sizes[TH_TENSOR_dim_index] = TENSOR->size[TENSOR##_i] * TENSOR##_sizes[TH_TENSOR_dim_index]; \
-          if (DIM != TENSOR->nDimension-1 && TENSOR##_i < DIM) \
+      for(TENSOR##_i = THTensor_nDimensionLegacyAll(TENSOR)-2; TENSOR##_i >= 0; --TENSOR##_i) { \
+        if (TENSOR->stride(TENSOR##_i) == TENSOR->stride(TENSOR##_i+1) * TENSOR->size(TENSOR##_i+1) && TENSOR##_i != DIM && TENSOR##_i+1 != DIM) { \
+          TENSOR##_sizes[TH_TENSOR_dim_index] = TENSOR->size(TENSOR##_i) * TENSOR##_sizes[TH_TENSOR_dim_index]; \
+          if (DIM != THTensor_nDimensionLegacyAll(TENSOR)-1 && TENSOR##_i < DIM) \
             TENSOR##_dimOffset--; \
         } else { \
           --TH_TENSOR_dim_index; \
-          TENSOR##_sizes[TH_TENSOR_dim_index] = TENSOR->size[TENSOR##_i]; \
-          TENSOR##_strides[TH_TENSOR_dim_index] = TENSOR->stride[TENSOR##_i]; \
+          TENSOR##_sizes[TH_TENSOR_dim_index] = TENSOR->size(TENSOR##_i); \
+          TENSOR##_strides[TH_TENSOR_dim_index] = TENSOR->stride(TENSOR##_i); \
         } \
       } \
       /* Size of the inner most section */ \
@@ -160,13 +160,12 @@
     elements_equal = 0;                                                 \
   }                                                                     \
   if (elements_equal == 0) {                                            \
-    THDescBuff T1buff = _THSizeDesc(TENSOR1->size, TENSOR1->nDimension); \
-    THDescBuff T2buff = _THSizeDesc(TENSOR2->size, TENSOR2->nDimension); \
-    THDescBuff T3buff = _THSizeDesc(TENSOR3->size, TENSOR3->nDimension); \
-    THError("inconsistent tensor size, expected %s %s, %s %s and %s %s to have the same " \
-            "number of elements, but got %d, %d and %d elements respectively", \
-            #TENSOR1, T1buff.str, #TENSOR2, T2buff.str, #TENSOR3, T3buff.str, \
-            TENSOR1##_n, TENSOR2##_n, TENSOR3##_n);                     \
+    AT_ERROR("inconsistent tensor size, expected ",                     \
+            #TENSOR1, " ", TENSOR1->sizes(), ", ",                      \
+            #TENSOR2, " ", TENSOR2->sizes(), " and ",                   \
+            #TENSOR3, " ", TENSOR3->sizes(), " to have the same "       \
+            "number of elements, but got ", TENSOR1##_n, ", ",          \
+            TENSOR2##_n, " and ", TENSOR3##_n, " elements respectively"); \
   }                                                                     \
                                                                         \
   while(!TH_TENSOR_APPLY_hasFinished) \
@@ -199,11 +198,11 @@
   __TH_TENSOR_APPLYX_PREAMBLE(TYPE2, TENSOR2, DIM, 1) \
 \
     if(TENSOR1##_n != TENSOR2##_n) {                                    \
-      THDescBuff T1buff = _THSizeDesc(TENSOR1->size, TENSOR1->nDimension); \
-      THDescBuff T2buff = _THSizeDesc(TENSOR2->size, TENSOR2->nDimension); \
-      THError("inconsistent tensor size, expected %s %s and %s %s to have the same " \
-              "number of elements, but got %d and %d elements respectively", \
-              #TENSOR1, T1buff.str, #TENSOR2, T2buff.str, TENSOR1##_n, TENSOR2##_n); \
+      AT_ERROR("inconsistent tensor size, expected ",                   \
+      #TENSOR1, " ", TENSOR1->sizes(), " and ",                         \
+      #TENSOR2, " ", TENSOR2->sizes(),                                  \
+      " to have the same number of elements, but got ",                 \
+      TENSOR1##_n, " and ", TENSOR2##_n, " elements respectively");     \
     }                                                                   \
   while(!TH_TENSOR_APPLY_hasFinished) \
   { \
@@ -254,7 +253,6 @@
 #define PRAGMA(P) __pragma(P)
 #endif
 
-#define TH_OMP_OVERHEAD_THRESHOLD_OMP 5000
 #include <omp.h>
 
 /*
@@ -271,7 +269,7 @@
  *  You can get the detailes in the for-statement iterations.
  *
  * The macro is only used in the first element in each thread. For the rest, the memory offset could update
- * according to info of the tensor in order to get better performance. So we should also record the each 
+ * according to info of the tensor in order to get better performance. So we should also record the each
  * indexs in coresponding dimension of first element.
  * The recorded info is stored in the TENSOR##_counter_tmp.
  *
@@ -317,61 +315,62 @@
   }
 
 
-#define TH_TENSOR_APPLY_REDUCTION_OMP(TYPE, TENSOR, OPERATION, CODE) \
+#define TH_TENSOR_APPLY_REDUCTION_OMP(TYPE, TENSOR, OPERATION, CODE, OMP_THRESHOLD) \
 {\
-  TYPE *rp = TENSOR->storage->data+TENSOR->storageOffset;                   \
   int TENSOR##Contg = THTensor_(isContiguous)(TENSOR);                      \
   ptrdiff_t TENSOR##Size = THTensor_(nElement)(TENSOR);                     \
-  ptrdiff_t iter = 0;                                                         \
-  if(TENSOR##Contg){                                                         \
-    TYPE *TENSOR##_data = NULL;         \
-    PRAGMA( omp parallel for if (TENSOR##Size > TH_OMP_OVERHEAD_THRESHOLD_OMP) private(TENSOR##_data,  iter) reduction(OPERATION) ) \
+  if(TENSOR##Contg){                                                        \
+    ptrdiff_t iter = 0;                                                     \
+    TYPE *rp = THTensor_getStoragePtr(TENSOR)->data<TYPE>()+TENSOR->storage_offset();         \
+    PRAGMA( omp parallel for if (TENSOR##Size > OMP_THRESHOLD * 10) firstprivate(rp) reduction(OPERATION) ) \
     for (iter = 0; iter < TENSOR##Size; iter++) { \
-      TENSOR##_data = rp+iter;                    \
+      TYPE *TENSOR##_data = rp+iter;                    \
       CODE                                         \
     }                                              \
   } else {                                         \
     int TH_TENSOR_APPLY_hasFinished = 0;           \
     int64_t TH_TENSOR_dim_index = 0;               \
     __TH_TENSOR_APPLYX_PREAMBLE(TYPE, TENSOR, -1, 1);\
-    PRAGMA(omp parallel if (TENSOR##Size > TH_OMP_OVERHEAD_THRESHOLD_OMP) firstprivate(TENSOR##_sizes, TENSOR##_strides, TENSOR##_dim, TENSOR##_stride, TENSOR##_size, TENSOR##_i) reduction(OPERATION))\
-    {\
-      size_t num_threads = omp_get_num_threads();\
-      size_t tid = omp_get_thread_num();\
-      size_t line_seg_length_avg = TENSOR##Size/num_threads;                                                     \
-      ptrdiff_t line_index_start = tid * line_seg_length_avg;                                            \
-      ptrdiff_t line_seg_length = (tid == num_threads - 1)? (TENSOR##Size - line_index_start):line_seg_length_avg;  \
-      __TH_TENSOR_APPLYX_CAL_MEMORY_OFFSET(TENSOR);\
-      TYPE *TENSOR##_data = rp + TENSOR##_memory_offset;\
-      ptrdiff_t count = 0;\
-      ptrdiff_t TENSOR##_start = TENSOR##_counter_tmp[TENSOR##_dim - 1];\
-      while(count < line_seg_length){\
-        for(TENSOR##_i=TENSOR##_start; (count < line_seg_length)&&(TENSOR##_i < TENSOR##_size); ++TENSOR##_i, ++count){\
-          CODE\
-          TENSOR##_data += TENSOR##_stride;\
+    if (0 == TH_TENSOR_APPLY_hasFinished) {          \
+      PRAGMA(omp parallel if (TENSOR##Size > OMP_THRESHOLD) firstprivate(TENSOR##_data, TENSOR##_sizes, TENSOR##_strides, TENSOR##_dim, TENSOR##_stride, TENSOR##_size, TENSOR##_i) reduction(OPERATION))\
+      {\
+        size_t num_threads = omp_get_num_threads();\
+        size_t tid = omp_get_thread_num();\
+        size_t line_seg_length_avg = TENSOR##Size/num_threads;                                                     \
+        ptrdiff_t line_index_start = tid * line_seg_length_avg;                                            \
+        ptrdiff_t line_seg_length = (tid == num_threads - 1)? (TENSOR##Size - line_index_start):line_seg_length_avg;  \
+        __TH_TENSOR_APPLYX_CAL_MEMORY_OFFSET(TENSOR);\
+        TENSOR##_data += TENSOR##_memory_offset;\
+        ptrdiff_t count = 0;\
+        ptrdiff_t TENSOR##_start = TENSOR##_counter_tmp[TENSOR##_dim - 1];\
+        while(count < line_seg_length){\
+          for(TENSOR##_i=TENSOR##_start; (count < line_seg_length)&&(TENSOR##_i < TENSOR##_size); ++TENSOR##_i, ++count){\
+            CODE\
+            TENSOR##_data += TENSOR##_stride;\
+          }\
+          if(count < line_seg_length){\
+            __TH_TENSOR_APPLYX_UPDATE_COUNTERS_OMP(TENSOR);\
+          }\
         }\
-        if(count < line_seg_length){\
-          __TH_TENSOR_APPLYX_UPDATE_COUNTERS_OMP(TENSOR);\
-        }\
+        if(TENSOR##_counter_tmp != NULL) \
+          THFree(TENSOR##_counter_tmp); \
       }\
-      if(TENSOR##_counter_tmp != NULL) \
-        THFree(TENSOR##_counter_tmp); \
     }\
     if(TENSOR##_counter != NULL)\
       THFree(TENSOR##_counter);\
   }\
 }
 
-#define TH_TENSOR_APPLY2_OMP(SIZE, CONTIG1, CONTIG2, TYPE1, TENSOR1, TYPE2, TENSOR2, CODE) \
+#define TH_TENSOR_APPLY2_OMP(SIZE, CONTIG1, CONTIG2, TYPE1, TENSOR1, TYPE2, TENSOR2, CODE, OMP_THRESHOLD) \
 {                                                                                              \
   /* for advanced searching index*/                                                            \
-  TYPE1 *rp = TENSOR1->storage->data+TENSOR1->storageOffset;                                    \
-  TYPE2 *tp = TENSOR2->storage->data+TENSOR2->storageOffset;                                    \
   if( CONTIG1 && CONTIG2 ){                                                                    \
+    TYPE1 *rp = THTensor_getStoragePtr(TENSOR1)->data<TYPE1>()+TENSOR1->storage_offset();                        \
+    TYPE2 *tp = THTensor_getStoragePtr(TENSOR2)->data<TYPE2>()+TENSOR2->storage_offset();                        \
     ptrdiff_t iter = 0;                                                                        \
-    if(tp != rp) {                                                                             \
+    if(tp != (TYPE2*)rp) {                                                                             \
       PRAGMA(ivdep) \
-      PRAGMA( omp parallel for if (SIZE > TH_OMP_OVERHEAD_THRESHOLD_OMP) firstprivate(rp, tp)) \
+      PRAGMA( omp parallel for if (SIZE > OMP_THRESHOLD * 10) firstprivate(rp, tp)) \
       for (iter = 0; iter < SIZE; iter++) {                             \
         TYPE2 *TENSOR2##_data = tp+iter;                                \
         TYPE1 *TENSOR1##_data = rp+iter;                                \
@@ -379,7 +378,7 @@
       }\
     } else {\
       PRAGMA(simd) \
-      PRAGMA( omp parallel for if (SIZE > TH_OMP_OVERHEAD_THRESHOLD_OMP) firstprivate(rp, tp) )  \
+      PRAGMA( omp parallel for if (SIZE > OMP_THRESHOLD * 10) firstprivate(rp, tp) )  \
       for (iter = 0; iter < SIZE; iter++) {\
         TYPE2* TENSOR2##_data = tp+iter;\
         TYPE1* TENSOR1##_data = rp+iter;\
@@ -399,38 +398,40 @@
     /*step 1*/                           \
     __TH_TENSOR_APPLYX_PREAMBLE(TYPE2, TENSOR2, -1, 1) \
     __TH_TENSOR_APPLYX_PREAMBLE(TYPE1, TENSOR1, -1, 1) \
-    PRAGMA(omp parallel if (SIZE > TH_OMP_OVERHEAD_THRESHOLD_OMP) firstprivate(TENSOR2##_sizes, TENSOR2##_strides, TENSOR2##_dim, TENSOR2##_stride, TENSOR2##_size, TENSOR2##_i, TENSOR1##_sizes, TENSOR1##_strides, TENSOR1##_dim, TENSOR1##_stride, TENSOR1##_size, TENSOR1##_i)) \
-    {                                   \
-      /*step 2*/                                                                 \
-      size_t num_threads = omp_get_num_threads();                                                        \
-      size_t tid = omp_get_thread_num();                                                                 \
-      size_t line_seg_length_avg = SIZE/num_threads;                                                     \
-      ptrdiff_t line_index_start = tid * line_seg_length_avg;                                            \
-      ptrdiff_t line_seg_length = (tid == num_threads - 1)? (SIZE - line_index_start):line_seg_length_avg;  \
-      /* step 3*/                                                                                        \
-      __TH_TENSOR_APPLYX_CAL_MEMORY_OFFSET(TENSOR2);                                                            \
-      __TH_TENSOR_APPLYX_CAL_MEMORY_OFFSET(TENSOR1);                                                            \
-      TYPE2 *TENSOR2##_data = tp + TENSOR2##_memory_offset;                                              \
-      TYPE1 *TENSOR1##_data = rp + TENSOR1##_memory_offset;                                              \
-      ptrdiff_t count = 0;                                                                               \
-      ptrdiff_t TENSOR2##_start =  TENSOR2##_counter_tmp[TENSOR2##_dim-1];                               \
-      ptrdiff_t TENSOR1##_start =  TENSOR1##_counter_tmp[TENSOR1##_dim-1];                               \
-      /* step 4*/                                                                                        \
-      while (count < line_seg_length) {                                                                     \
-        for(TENSOR2##_i=TENSOR2##_start, TENSOR1##_i = TENSOR1##_start; ((count < line_seg_length) && (TENSOR2##_i < TENSOR2##_size) && (TENSOR1##_i < TENSOR1##_size)); ++TENSOR2##_i, ++TENSOR1##_i, ++count){ \
-          CODE                                                                                               \
-          TENSOR2##_data += TENSOR2##_stride;                                                                \
-          TENSOR1##_data += TENSOR1##_stride;                                                                \
-        }                                                                                                    \
-        if (count < line_seg_length){                                                                           \
-          __TH_TENSOR_APPLYX_UPDATE_COUNTERS_OMP(TENSOR2);                                                   \
-          __TH_TENSOR_APPLYX_UPDATE_COUNTERS_OMP(TENSOR1);                                                   \
-        }                                                                                                    \
-      }                                                                                                      \
-      if(TENSOR1##_counter_tmp != NULL) \
-        THFree(TENSOR1##_counter_tmp); \
-      if(TENSOR2##_counter_tmp != NULL) \
-        THFree(TENSOR2##_counter_tmp); \
+    if (0 == TH_TENSOR_APPLY_hasFinished) {            \
+      PRAGMA(omp parallel if (SIZE > OMP_THRESHOLD) firstprivate(TENSOR2##_data, TENSOR2##_sizes, TENSOR2##_strides, TENSOR2##_dim, TENSOR2##_stride, TENSOR2##_size, TENSOR2##_i, TENSOR1##_data, TENSOR1##_sizes, TENSOR1##_strides, TENSOR1##_dim, TENSOR1##_stride, TENSOR1##_size, TENSOR1##_i)) \
+      {                                   \
+        /*step 2*/                                                                 \
+        size_t num_threads = omp_get_num_threads();                                                        \
+        size_t tid = omp_get_thread_num();                                                                 \
+        size_t line_seg_length_avg = SIZE/num_threads;                                                     \
+        ptrdiff_t line_index_start = tid * line_seg_length_avg;                                            \
+        ptrdiff_t line_seg_length = (tid == num_threads - 1)? (SIZE - line_index_start):line_seg_length_avg;  \
+        /* step 3*/                                                                                        \
+        __TH_TENSOR_APPLYX_CAL_MEMORY_OFFSET(TENSOR2);                                                            \
+        __TH_TENSOR_APPLYX_CAL_MEMORY_OFFSET(TENSOR1);                                                            \
+        TENSOR2##_data += TENSOR2##_memory_offset;                                              \
+        TENSOR1##_data += TENSOR1##_memory_offset;                                              \
+        ptrdiff_t count = 0;                                                                               \
+        ptrdiff_t TENSOR2##_start =  TENSOR2##_counter_tmp[TENSOR2##_dim-1];                               \
+        ptrdiff_t TENSOR1##_start =  TENSOR1##_counter_tmp[TENSOR1##_dim-1];                               \
+        /* step 4*/                                                                                        \
+        while (count < line_seg_length) {                                                                     \
+          for(TENSOR2##_i=TENSOR2##_start, TENSOR1##_i = TENSOR1##_start; ((count < line_seg_length) && (TENSOR2##_i < TENSOR2##_size) && (TENSOR1##_i < TENSOR1##_size)); ++TENSOR2##_i, ++TENSOR1##_i, ++count){ \
+            CODE                                                                                               \
+            TENSOR2##_data += TENSOR2##_stride;                                                                \
+            TENSOR1##_data += TENSOR1##_stride;                                                                \
+          }                                                                                                    \
+          if (count < line_seg_length){                                                                           \
+            __TH_TENSOR_APPLYX_UPDATE_COUNTERS_OMP(TENSOR2);                                                   \
+            __TH_TENSOR_APPLYX_UPDATE_COUNTERS_OMP(TENSOR1);                                                   \
+          }                                                                                                    \
+        }                                                                                                      \
+        if(TENSOR1##_counter_tmp != NULL) \
+          THFree(TENSOR1##_counter_tmp); \
+        if(TENSOR2##_counter_tmp != NULL) \
+          THFree(TENSOR2##_counter_tmp); \
+      } \
     }                                                                                                        \
     if(TENSOR2##_counter != NULL) \
       THFree(TENSOR2##_counter); \
@@ -439,17 +440,17 @@
   }\
 }
 
-#define TH_TENSOR_APPLY3_OMP(SIZE, CONTIG1, CONTIG2, CONTIG3, TYPE1, TENSOR1, TYPE2, TENSOR2, TYPE3, TENSOR3, CODE) \
+#define TH_TENSOR_APPLY3_OMP(SIZE, CONTIG1, CONTIG2, CONTIG3, TYPE1, TENSOR1, TYPE2, TENSOR2, TYPE3, TENSOR3, CODE, OMP_THRESHOLD) \
 {                                                                             \
   /* for adveanced searching index*/                                                                    \
-  TYPE1 *rp = TENSOR1->storage->data+TENSOR1->storageOffset;                                             \
-  TYPE2 *tp = TENSOR2->storage->data+TENSOR2->storageOffset;                                             \
-  TYPE3 *srcp = TENSOR3->storage->data+TENSOR3->storageOffset;                                           \
   if(CONTIG1 && CONTIG2 && CONTIG3){                                                                    \
+    TYPE1 *rp = THTensor_getStoragePtr(TENSOR1)->data<TYPE1>()+TENSOR1->storage_offset();                                 \
+    TYPE2 *tp = THTensor_getStoragePtr(TENSOR2)->data<TYPE2>()+TENSOR2->storage_offset();                                 \
+    TYPE3 *srcp = THTensor_getStoragePtr(TENSOR3)->data<TYPE3>()+TENSOR3->storage_offset();                               \
     ptrdiff_t iter = 0;\
-    if (rp != tp) { \
+    if(tp != (TYPE2*)rp) {                                                                             \
       PRAGMA(ivdep) \
-      PRAGMA( omp parallel for if (SIZE > TH_OMP_OVERHEAD_THRESHOLD_OMP) )  \
+      PRAGMA( omp parallel for if (SIZE > OMP_THRESHOLD * 10) )  \
       for (iter = 0; iter < SIZE; iter++) {\
         TYPE1 *TENSOR1##_data = rp+iter;\
         TYPE2 *TENSOR2##_data = tp+iter; \
@@ -458,7 +459,7 @@
       } \
     } else {\
       PRAGMA(simd) \
-      PRAGMA( omp parallel for if (SIZE > TH_OMP_OVERHEAD_THRESHOLD_OMP) )  \
+      PRAGMA( omp parallel for if (SIZE > OMP_THRESHOLD * 10) )  \
       for (iter = 0; iter < SIZE; iter++) {\
         TYPE1 *TENSOR1##_data = rp+iter;\
         TYPE2 *TENSOR2##_data = tp+iter; \
@@ -472,42 +473,44 @@
     __TH_TENSOR_APPLYX_PREAMBLE(TYPE1, TENSOR1, -1, 1) \
     __TH_TENSOR_APPLYX_PREAMBLE(TYPE2, TENSOR2, -1, 1) \
     __TH_TENSOR_APPLYX_PREAMBLE(TYPE3, TENSOR3, -1, 1) \
-    PRAGMA(omp parallel if (SIZE > TH_OMP_OVERHEAD_THRESHOLD_OMP) firstprivate(TENSOR1##_sizes, TENSOR1##_strides, TENSOR1##_dim, TENSOR1##_stride, TENSOR1##_size, TENSOR1##_i, TENSOR2##_sizes, TENSOR2##_strides, TENSOR2##_dim, TENSOR2##_stride, TENSOR2##_size, TENSOR2##_i, TENSOR3##_sizes, TENSOR3##_strides, TENSOR3##_dim, TENSOR3##_stride, TENSOR3##_size, TENSOR3##_i))\
-    {\
-      size_t num_threads = omp_get_num_threads();\
-      size_t tid = omp_get_thread_num();\
-      size_t line_seg_length_avg = SIZE/num_threads;                                                     \
-      ptrdiff_t line_index_start = tid * line_seg_length_avg;                                            \
-      ptrdiff_t line_seg_length = (tid == num_threads - 1)? (SIZE - line_index_start):line_seg_length_avg;  \
-      __TH_TENSOR_APPLYX_CAL_MEMORY_OFFSET(TENSOR1);\
-      __TH_TENSOR_APPLYX_CAL_MEMORY_OFFSET(TENSOR2);\
-      __TH_TENSOR_APPLYX_CAL_MEMORY_OFFSET(TENSOR3);\
-      TYPE1 *TENSOR1##_data = rp + TENSOR1##_memory_offset;\
-      TYPE2 *TENSOR2##_data = tp + TENSOR2##_memory_offset;\
-      TYPE3 *TENSOR3##_data = srcp + TENSOR3##_memory_offset;\
-      ptrdiff_t count = 0;\
-      ptrdiff_t TENSOR1##_start = TENSOR1##_counter_tmp[TENSOR1##_dim - 1];\
-      ptrdiff_t TENSOR2##_start = TENSOR2##_counter_tmp[TENSOR2##_dim - 1];\
-      ptrdiff_t TENSOR3##_start = TENSOR3##_counter_tmp[TENSOR3##_dim - 1];\
-      while(count < line_seg_length){\
-        for(TENSOR1##_i=TENSOR1##_start, TENSOR2##_i=TENSOR2##_start,TENSOR3##_i=TENSOR3##_start; (count<line_seg_length)&&(TENSOR1##_i<TENSOR1##_size)&&(TENSOR2##_i<TENSOR2##_size)&&(TENSOR3##_i<TENSOR3##_size); ++TENSOR1##_i,++TENSOR2##_i,++TENSOR3##_i,++count){\
-          CODE\
-          TENSOR1##_data += TENSOR1##_stride;\
-          TENSOR2##_data += TENSOR2##_stride;\
-          TENSOR3##_data += TENSOR3##_stride;\
+    if (0 == TH_TENSOR_APPLY_hasFinished) {            \
+      PRAGMA(omp parallel if (SIZE > OMP_THRESHOLD) firstprivate(TENSOR1##_data, TENSOR1##_sizes, TENSOR1##_strides, TENSOR1##_dim, TENSOR1##_stride, TENSOR1##_size, TENSOR1##_i, TENSOR2##_data, TENSOR2##_sizes, TENSOR2##_strides, TENSOR2##_dim, TENSOR2##_stride, TENSOR2##_size, TENSOR2##_i, TENSOR3##_data, TENSOR3##_sizes, TENSOR3##_strides, TENSOR3##_dim, TENSOR3##_stride, TENSOR3##_size, TENSOR3##_i))\
+      {\
+        size_t num_threads = omp_get_num_threads();\
+        size_t tid = omp_get_thread_num();\
+        size_t line_seg_length_avg = SIZE/num_threads;                                                     \
+        ptrdiff_t line_index_start = tid * line_seg_length_avg;                                            \
+        ptrdiff_t line_seg_length = (tid == num_threads - 1)? (SIZE - line_index_start):line_seg_length_avg;  \
+        __TH_TENSOR_APPLYX_CAL_MEMORY_OFFSET(TENSOR1);\
+        __TH_TENSOR_APPLYX_CAL_MEMORY_OFFSET(TENSOR2);\
+        __TH_TENSOR_APPLYX_CAL_MEMORY_OFFSET(TENSOR3);\
+        TENSOR1##_data += TENSOR1##_memory_offset;\
+        TENSOR2##_data += TENSOR2##_memory_offset;\
+        TENSOR3##_data += TENSOR3##_memory_offset;\
+        ptrdiff_t count = 0;\
+        ptrdiff_t TENSOR1##_start = TENSOR1##_counter_tmp[TENSOR1##_dim - 1];\
+        ptrdiff_t TENSOR2##_start = TENSOR2##_counter_tmp[TENSOR2##_dim - 1];\
+        ptrdiff_t TENSOR3##_start = TENSOR3##_counter_tmp[TENSOR3##_dim - 1];\
+        while(count < line_seg_length){\
+          for(TENSOR1##_i=TENSOR1##_start, TENSOR2##_i=TENSOR2##_start,TENSOR3##_i=TENSOR3##_start; (count<line_seg_length)&&(TENSOR1##_i<TENSOR1##_size)&&(TENSOR2##_i<TENSOR2##_size)&&(TENSOR3##_i<TENSOR3##_size); ++TENSOR1##_i,++TENSOR2##_i,++TENSOR3##_i,++count){\
+            CODE\
+            TENSOR1##_data += TENSOR1##_stride;\
+            TENSOR2##_data += TENSOR2##_stride;\
+            TENSOR3##_data += TENSOR3##_stride;\
+          }\
+          if(count < line_seg_length){\
+            __TH_TENSOR_APPLYX_UPDATE_COUNTERS_OMP(TENSOR1);\
+            __TH_TENSOR_APPLYX_UPDATE_COUNTERS_OMP(TENSOR2);\
+            __TH_TENSOR_APPLYX_UPDATE_COUNTERS_OMP(TENSOR3);\
+          }\
         }\
-        if(count < line_seg_length){\
-          __TH_TENSOR_APPLYX_UPDATE_COUNTERS_OMP(TENSOR1);\
-          __TH_TENSOR_APPLYX_UPDATE_COUNTERS_OMP(TENSOR2);\
-          __TH_TENSOR_APPLYX_UPDATE_COUNTERS_OMP(TENSOR3);\
-        }\
+        if(TENSOR1##_counter_tmp != NULL) \
+          THFree(TENSOR1##_counter_tmp); \
+        if(TENSOR2##_counter_tmp != NULL) \
+          THFree(TENSOR2##_counter_tmp); \
+        if(TENSOR3##_counter_tmp != NULL) \
+          THFree(TENSOR3##_counter_tmp);\
       }\
-      if(TENSOR1##_counter_tmp != NULL) \
-        THFree(TENSOR1##_counter_tmp); \
-      if(TENSOR2##_counter_tmp != NULL) \
-        THFree(TENSOR2##_counter_tmp); \
-      if(TENSOR3##_counter_tmp != NULL) \
-        THFree(TENSOR3##_counter_tmp);\
     }\
     if(TENSOR1##_counter != NULL)\
       THFree(TENSOR1##_counter);\

@@ -1,7 +1,10 @@
 #pragma once
 
-#include <Python.h>
+#include "torch/csrc/python_headers.h"
+
+#include "torch/csrc/autograd/function.h"
 #include "torch/csrc/autograd/engine.h"
+#include "torch/csrc/autograd/python_anomaly_mode.h"
 
 bool THPEngine_initModule(PyObject *module);
 
@@ -11,13 +14,12 @@ struct PythonEngine : public Engine {
   virtual void thread_init(int device) override;
   virtual void thread_on_exception(FunctionTask& task, std::exception& e) override;
   virtual variable_list execute(
-      const function_list& roots,
+      const edge_list& roots,
       const variable_list& inputs,
       bool keep_graph,
       bool create_graph,
-      const function_list& outputs = {}) override;
-
-  static PythonEngine& getDefaultEngine();
+      const edge_list& outputs = {}) override;
+  virtual std::unique_ptr<AnomalyMetadata> make_anomaly_metadata() override;
 };
 
 }}} // namespace torch::autograd::python

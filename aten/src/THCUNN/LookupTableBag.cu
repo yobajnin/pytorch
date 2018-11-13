@@ -1,5 +1,6 @@
 #include "THCUNN.h"
 #include "common.h"
+#include "THCTensor.hpp"
 
 #include "THCThrustAllocator.cuh"
 #include <thrust/device_ptr.h>
@@ -10,11 +11,15 @@
 #include <thrust/system/cuda/execution_policy.h>
 #endif
 #include <thrust/unique.h>
-#include "THCHalf.h"
+#include "TH/THHalf.h"
 #include "THCHalfAutoNumerics.cuh"
 #include "THCTensorSort.cuh"
 
+#if defined(__HIP_PLATFORM_HCC__)
+const int WARP_SIZE = 64;
+#else
 const int WARP_SIZE = 32;
+#endif
 const int MODE_SUM = 0;
 const int MODE_MEAN = 1;
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <Python.h>
+#include "torch/csrc/python_headers.h"
 #include "torch/csrc/Exceptions.h"
 #include "torch/csrc/utils/object_ptr.h"
 #include "torch/csrc/utils/python_numbers.h"
@@ -11,7 +11,7 @@ inline void THPUtils_packInt64Array(PyObject *tuple, size_t size, const int64_t 
     if (!i64) {
       throw python_error();
     }
-    PyTuple_SET_ITEM(tuple, i, THPUtils_packInt64(sizes[i]));
+    PyTuple_SET_ITEM(tuple, i, i64);
   }
 }
 

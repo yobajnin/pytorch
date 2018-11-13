@@ -14,27 +14,27 @@ MPI supports cuda only if the implementation used to build PyTorch supports it.
 
 
 +------------+-----------+-----------+-----------+
-| Backend    | ``tcp``   | ``gloo``  | ``mpi``   |
+| Backend    | ``gloo``  | ``mpi``   | ``nccl``  |
 +------------+-----+-----+-----+-----+-----+-----+
 | Device     | CPU | GPU | CPU | GPU | CPU | GPU |
 +============+=====+=====+=====+=====+=====+=====+
-| send       | ✓   | ✘   | ✘   | ✘   | ✓   | ?   |
+| send       | ✓   | ✘   | ✓   | ?   | ✘   | ✘   |
 +------------+-----+-----+-----+-----+-----+-----+
-| recv       | ✓   | ✘   | ✘   | ✘   | ✓   | ?   |
+| recv       | ✓   | ✘   | ✓   | ?   | ✘   | ✘   |
 +------------+-----+-----+-----+-----+-----+-----+
-| broadcast  | ✓   | ✘   | ✓   | ✓   | ✓   | ?   |
+| broadcast  | ✓   | ✓   | ✓   | ?   | ✘   | ✓   |
 +------------+-----+-----+-----+-----+-----+-----+
-| all_reduce | ✓   | ✘   | ✓   | ✓   | ✓   | ?   |
+| all_reduce | ✓   | ✓   | ✓   | ?   | ✘   | ✓   |
 +------------+-----+-----+-----+-----+-----+-----+
-| reduce     | ✓   | ✘   | ✘   | ✘   | ✓   | ?   |
+| reduce     | ✘   | ✘   | ✓   | ?   | ✘   | ✓   |
 +------------+-----+-----+-----+-----+-----+-----+
-| all_gather | ✓   | ✘   | ✘   | ✘   | ✓   | ?   |
+| all_gather | ✘   | ✘   | ✓   | ?   | ✘   | ✓   |
 +------------+-----+-----+-----+-----+-----+-----+
-| gather     | ✓   | ✘   | ✘   | ✘   | ✓   | ?   |
+| gather     | ✘   | ✘   | ✓   | ?   | ✘   | ✘   |
 +------------+-----+-----+-----+-----+-----+-----+
-| scatter    | ✓   | ✘   | ✘   | ✘   | ✓   | ?   |
+| scatter    | ✘   | ✘   | ✓   | ?   | ✘   | ✘   |
 +------------+-----+-----+-----+-----+-----+-----+
-| barrier    | ✓   | ✘   | ✓   | ✓   | ✓   | ?   |
+| barrier    | ✘   | ✘   | ✓   | ?   | ✘   | ✘   |
 +------------+-----+-----+-----+-----+-----+-----+
 
 .. _distributed-basics:
@@ -75,9 +75,21 @@ joined.
 
 .. autofunction:: init_process_group
 
+.. autoclass:: Backend
+
+.. autofunction:: get_backend
+
 .. autofunction:: get_rank
 
 .. autofunction:: get_world_size
+
+.. autofunction:: is_initialized
+
+.. autofunction:: get_default_group
+
+.. autofunction:: is_mpi_available
+
+.. autofunction:: is_nccl_available
 
 --------------------------------------------------------------------------------
 
@@ -88,24 +100,19 @@ TCP initialization
 
 There are two ways to initialize using TCP, both requiring a network address
 reachable from all processes and a desired ``world_size``. The first way
-requires specifying an address that belongs to the rank 0 process. This first way of
-initialization requires that all processes have manually specified ranks.
+requires specifying an address that belongs to the rank 0 process. This
+initialization method requires that all processes have manually specified ranks.
 
-Alternatively, the address has to be a valid IP multicast address, in which case
-ranks can be assigned automatically. Multicast initialization also supports
-a ``group_name`` argument, which allows you to use the same address for multiple
-jobs, as long as they use different group names.
+Note that multicast address is not supported anymore in the latest distributed
+package. ``group_name`` is deprecated as well.
 
 ::
 
     import torch.distributed as dist
 
     # Use address of one of the machines
-    dist.init_process_group(init_method='tcp://10.1.1.20:23456', rank=args.rank, world_size=4)
-
-    # or a multicast address - rank will be assigned automatically if unspecified
-    dist.init_process_group(init_method='tcp://[ff15:1e18:5d4c:4cf0:d02d:b659:53ba:b0a7]:23456',
-                            world_size=4)
+    dist.init_process_group(backend, init_method='tcp://10.1.1.20:23456',
+                            rank=args.rank, world_size=4)
 
 Shared file-system initialization
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -113,21 +120,34 @@ Shared file-system initialization
 Another initialization method makes use of a file system that is shared and
 visible from all machines in a group, along with a desired ``world_size``. The URL should start
 with ``file://`` and contain a path to a non-existent file (in an existing
-directory) on a shared file system. This initialization method also supports a
-``group_name`` argument, which allows you to use the same shared file path for
-multiple jobs, as long as they use different group names.
+directory) on a shared file system. File-system initialization will automatically
+create that file if it doesn't exist, but will not delete the file. Therefore, it
+is your responsibility to make sure that the file is cleaned up before the next
+:func:`init_process_group` call on the same file path/name.
+
+Note that automatic rank assignment is not supported anymore in the latest
+distributed package and ``group_name`` is deprecated as well.
 
 .. warning::
     This method assumes that the file system supports locking using ``fcntl`` - most
     local systems and NFS support it.
 
+.. warning::
+    This method does not clean up and remove the file and it is your responsibility
+    to remove the file at the end of the training. This is especially important
+    if you plan to call :func:`init_process_group` multiple times on the same file name.
+    In other words, if the file is not removed/cleaned up and you call
+    :func:`init_process_group` again on that file, it is unexpected behavior and will cause
+    failures. The rule of thumb here is that, make sure that the file is non-existent or
+    empty everytime :func:`init_process_group` is called.
+
 ::
 
     import torch.distributed as dist
 
-    # Rank will be assigned automatically if unspecified
-    dist.init_process_group(init_method='file:///mnt/nfs/sharedfile', world_size=4,
-                            group_name=args.group)
+    # rank should always be specified
+    dist.init_process_group(backend, init_method='file:///mnt/nfs/sharedfile',
+                            world_size=4, rank=args.rank)
 
 Environment variable initialization
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -173,14 +193,29 @@ as they should never be created manually, but they are guaranteed to support two
 * ``is_completed()`` - returns True if the operation has finished
 * ``wait()`` - will block the process until the operation is finished.
   ``is_completed()`` is guaranteed to return True once it returns.
-  
-When using the MPI backend, :func:`~torch.distributed.isend` and :func:`~torch.distributed.irecv`
-support non-overtaking, which has some guarantees on supporting message order. For more detail, see
-http://mpi-forum.org/docs/mpi-2.2/mpi22-report/node54.htm#Node54
 
 .. autofunction:: isend
 
 .. autofunction:: irecv
+
+Synchronous and asynchornous collective operations
+--------------------------------------------------
+Every collective operation function supports the following two kinds of operations:
+
+synchronous operation - the default mode, when ``async_op`` is set to False.
+when the function returns, it is guaranteed that
+the collective operation is performed (not necessarily completed if it's a CUDA op since all
+CUDA ops are asynchornous), and any further function calls depending on the data of the
+collective operation can be called. In the synchronous mode, the collective function does not
+return anything
+
+asynchornous operation - when ``async_op`` is set to True. The collective operation function
+returns a distributed request object. In general, you don't need to create it manually and it
+is guaranteed to support two methods:
+
+* ``is_completed()`` - returns True if the operation has finished
+* ``wait()`` - will block the process until the operation is finished.
+
 
 Collective functions
 --------------------
@@ -199,3 +234,86 @@ Collective functions
 
 .. autofunction:: barrier
 
+.. autoclass:: ReduceOp
+
+.. class:: reduce_op
+
+    Deprecated enum-like class for reduction operations: ``SUM``, ``PRODUCT``,
+    ``MIN``, and ``MAX``.
+
+    :class:`~torch.distributed.ReduceOp` is recommended to use instead.
+
+
+Multi-GPU collective functions
+------------------------------
+
+If you have more than one GPU on each node, when using the NCCL and Gloo backend,
+:func:`~torch.distributed.broadcast_multigpu`
+:func:`~torch.distributed.all_reduce_multigpu`
+:func:`~torch.distributed.reduce_multigpu` and
+:func:`~torch.distributed.all_gather_multigpu` support distributed collective
+operations among multiple GPUs within each node. These functions can potentially
+improve the overall distributed training performance and be easily used by
+passing a list of tensors. Each Tensor in the passed tensor list needs
+to be on a separate GPU device of the host where the function is called. Note
+that the length of the tensor list needs to be identical among all the
+distributed processes. Also note that currently the multi-GPU collective
+functions are only supported by the NCCL backend.
+
+For example, if the system we use for distributed training has 2 nodes, each
+of which has 8 GPUs. On each of the 16 GPUs, there is a tensor that we would
+like to all-reduce. The following code can serve as a reference:
+
+Code running on Node 0
+
+::
+
+    import torch
+    import torch.distributed as dist
+
+    dist.init_process_group(backend="nccl",
+                            init_method="file:///distributed_test",
+                            world_size=2,
+                            rank=0)
+    tensor_list = []
+    for dev_idx in range(torch.cuda.device_count()):
+        tensor_list.append(torch.FloatTensor([1]).cuda(dev_idx))
+
+    dist.all_reduce_multigpu(tensor_list)
+
+Code running on Node 1
+
+::
+
+    import torch
+    import torch.distributed as dist
+
+    dist.init_process_group(backend="nccl",
+                            init_method="file:///distributed_test",
+                            world_size=2,
+                            rank=1)
+    tensor_list = []
+    for dev_idx in range(torch.cuda.device_count()):
+        tensor_list.append(torch.FloatTensor([1]).cuda(dev_idx))
+
+    dist.all_reduce_multigpu(tensor_list)
+
+After the call, all 16 tensors on the two nodes will have the all-reduced value
+of 16
+
+.. autofunction:: broadcast_multigpu
+
+.. autofunction:: all_reduce_multigpu
+
+.. autofunction:: reduce_multigpu
+
+.. autofunction:: all_gather_multigpu
+
+
+Launch utility
+--------------
+
+The `torch.distributed` package also provides a launch utility in
+`torch.distributed.launch`.
+
+.. automodule:: torch.distributed.launch

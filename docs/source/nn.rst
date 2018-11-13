@@ -34,13 +34,25 @@ Containers
 .. autoclass:: ModuleList
     :members:
 
+:hidden:`ModuleDict`
+~~~~~~~~~~~~~~~~~~~~
+
+.. autoclass:: ModuleDict
+    :members:
+
 :hidden:`ParameterList`
 ~~~~~~~~~~~~~~~~~~~~~~~
 
 .. autoclass:: ParameterList
     :members:
 
-Convolution Layers
+:hidden:`ParameterDict`
+~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autoclass:: ParameterDict
+    :members:
+
+Convolution layers
 ----------------------------------
 
 :hidden:`Conv1d`
@@ -80,8 +92,20 @@ Convolution Layers
 .. autoclass:: ConvTranspose3d
     :members:
 
+:hidden:`Unfold`
+~~~~~~~~~~~~~~~~
 
-Pooling Layers
+.. autoclass:: Unfold
+    :members:
+
+:hidden:`Fold`
+~~~~~~~~~~~~~~
+
+.. autoclass:: Fold
+    :members:
+
+
+Pooling layers
 ----------------------------------
 
 :hidden:`MaxPool1d`
@@ -144,6 +168,12 @@ Pooling Layers
 .. autoclass:: FractionalMaxPool2d
     :members:
 
+:hidden:`LPPool1d`
+~~~~~~~~~~~~~~~~~~
+
+.. autoclass:: LPPool1d
+    :members:
+
 :hidden:`LPPool2d`
 ~~~~~~~~~~~~~~~~~~
 
@@ -187,13 +217,25 @@ Pooling Layers
     :members:
 
 
-Padding Layers
+Padding layers
 --------------
+
+:hidden:`ReflectionPad1d`
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autoclass:: ReflectionPad1d
+    :members:
 
 :hidden:`ReflectionPad2d`
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. autoclass:: ReflectionPad2d
+    :members:
+
+:hidden:`ReplicationPad1d`
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autoclass:: ReplicationPad1d
     :members:
 
 :hidden:`ReplicationPad2d`
@@ -214,15 +256,63 @@ Padding Layers
 .. autoclass:: ZeroPad2d
     :members:
 
+:hidden:`ConstantPad1d`
+~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autoclass:: ConstantPad1d
+    :members:
+
 :hidden:`ConstantPad2d`
 ~~~~~~~~~~~~~~~~~~~~~~~
 
 .. autoclass:: ConstantPad2d
     :members:
 
+:hidden:`ConstantPad3d`
+~~~~~~~~~~~~~~~~~~~~~~~
 
-Non-linear Activations
-----------------------------------
+.. autoclass:: ConstantPad3d
+    :members:
+
+
+Non-linear activations (weighted sum, nonlinearity)
+---------------------------------------------------
+
+:hidden:`ELU`
+~~~~~~~~~~~~~
+
+.. autoclass:: ELU
+    :members:
+
+:hidden:`Hardshrink`
+~~~~~~~~~~~~~~~~~~~~
+
+.. autoclass:: Hardshrink
+    :members:
+
+:hidden:`Hardtanh`
+~~~~~~~~~~~~~~~~~~
+
+.. autoclass:: Hardtanh
+    :members:
+
+:hidden:`LeakyReLU`
+~~~~~~~~~~~~~~~~~~~
+
+.. autoclass:: LeakyReLU
+    :members:
+
+:hidden:`LogSigmoid`
+~~~~~~~~~~~~~~~~~~~~
+
+.. autoclass:: LogSigmoid
+    :members:
+
+:hidden:`PReLU`
+~~~~~~~~~~~~~~~
+
+.. autoclass:: PReLU
+    :members:
 
 :hidden:`ReLU`
 ~~~~~~~~~~~~~~
@@ -236,10 +326,10 @@ Non-linear Activations
 .. autoclass:: ReLU6
     :members:
 
-:hidden:`ELU`
-~~~~~~~~~~~~~
+:hidden:`RReLU`
+~~~~~~~~~~~~~~~
 
-.. autoclass:: ELU
+.. autoclass:: RReLU
     :members:
 
 :hidden:`SELU`
@@ -248,46 +338,16 @@ Non-linear Activations
 .. autoclass:: SELU
     :members:
 
-:hidden:`PReLU`
-~~~~~~~~~~~~~~~
+:hidden:`CELU`
+~~~~~~~~~~~~~~
 
-.. autoclass:: PReLU
-    :members:
-
-:hidden:`LeakyReLU`
-~~~~~~~~~~~~~~~~~~~
-
-.. autoclass:: LeakyReLU
-    :members:
-
-:hidden:`Threshold`
-~~~~~~~~~~~~~~~~~~~
-
-.. autoclass:: Threshold
-    :members:
-
-:hidden:`Hardtanh`
-~~~~~~~~~~~~~~~~~~
-
-.. autoclass:: Hardtanh
+.. autoclass:: CELU
     :members:
 
 :hidden:`Sigmoid`
 ~~~~~~~~~~~~~~~~~
 
 .. autoclass:: Sigmoid
-    :members:
-
-:hidden:`Tanh`
-~~~~~~~~~~~~~~
-
-.. autoclass:: Tanh
-    :members:
-
-:hidden:`LogSigmoid`
-~~~~~~~~~~~~~~~~~~~~
-
-.. autoclass:: LogSigmoid
     :members:
 
 :hidden:`Softplus`
@@ -308,11 +368,26 @@ Non-linear Activations
 .. autoclass:: Softsign
     :members:
 
+:hidden:`Tanh`
+~~~~~~~~~~~~~~
+
+.. autoclass:: Tanh
+    :members:
+
 :hidden:`Tanhshrink`
 ~~~~~~~~~~~~~~~~~~~~
 
 .. autoclass:: Tanhshrink
     :members:
+
+:hidden:`Threshold`
+~~~~~~~~~~~~~~~~~~~
+
+.. autoclass:: Threshold
+    :members:
+
+Non-linear activations (other)
+------------------------------
 
 :hidden:`Softmin`
 ~~~~~~~~~~~~~~~~~
@@ -338,6 +413,11 @@ Non-linear Activations
 .. autoclass:: LogSoftmax
     :members:
 
+:hidden:`AdaptiveLogSoftmaxWithLoss`
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autoclass:: AdaptiveLogSoftmaxWithLoss
+    :members:
 
 Normalization layers
 ----------------------------------
@@ -360,6 +440,12 @@ Normalization layers
 .. autoclass:: BatchNorm3d
     :members:
 
+:hidden:`GroupNorm`
+~~~~~~~~~~~~~~~~~~~
+
+.. autoclass:: GroupNorm
+    :members:
+
 :hidden:`InstanceNorm1d`
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -378,8 +464,14 @@ Normalization layers
 .. autoclass:: InstanceNorm3d
     :members:
 
-:hidden:`LocalResponseNorm`
+:hidden:`LayerNorm`
 ~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autoclass:: LayerNorm
+    :members:
+
+:hidden:`LocalResponseNorm`
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. autoclass:: LocalResponseNorm
     :members:
@@ -518,6 +610,12 @@ Loss functions
 .. autoclass:: CrossEntropyLoss
     :members:
 
+:hidden:`CTCLoss`
+~~~~~~~~~~~~~~~~~
+
+.. autoclass:: CTCLoss
+    :members:
+
 :hidden:`NLLLoss`
 ~~~~~~~~~~~~~~~~~
 
@@ -646,14 +744,35 @@ DataParallel layers (multi-GPU, distributed)
 .. autoclass:: torch.nn.parallel.DistributedDataParallel
     :members:
 
+:hidden:`DistributedDataParallelCPU`
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autoclass:: torch.nn.parallel.DistributedDataParallelCPU
+    :members:
+
 
 Utilities
 ---------
 
-:hidden:`clip_grad_norm`
-~~~~~~~~~~~~~~~~~~~~~~~~
+:hidden:`clip_grad_norm_`
+~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. autofunction:: torch.nn.utils.clip_grad_norm
+.. autofunction:: torch.nn.utils.clip_grad_norm_
+
+:hidden:`clip_grad_value_`
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autofunction:: torch.nn.utils.clip_grad_value_
+
+:hidden:`parameters_to_vector`
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autofunction:: torch.nn.utils.parameters_to_vector
+
+:hidden:`vector_to_parameters`
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autofunction:: torch.nn.utils.vector_to_parameters
 
 :hidden:`weight_norm`
 ~~~~~~~~~~~~~~~~~~~~~
@@ -664,6 +783,16 @@ Utilities
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. autofunction:: torch.nn.utils.remove_weight_norm
+
+:hidden:`spectral_norm`
+~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autofunction:: torch.nn.utils.spectral_norm
+
+:hidden:`remove_spectral_norm`
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autofunction:: torch.nn.utils.remove_spectral_norm
 
 
 .. currentmodule:: torch.nn.utils.rnn
@@ -736,6 +865,16 @@ Convolution functions
 
 .. autofunction:: conv_transpose3d
 
+:hidden:`unfold`
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autofunction:: unfold
+
+:hidden:`fold`
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autofunction:: fold
+
 Pooling functions
 ----------------------------------
 
@@ -783,6 +922,11 @@ Pooling functions
 ~~~~~~~~~~~~~~~~~~~~~~
 
 .. autofunction:: max_unpool3d
+
+:hidden:`lp_pool1d`
+~~~~~~~~~~~~~~~~~~~
+
+.. autofunction:: lp_pool1d
 
 :hidden:`lp_pool2d`
 ~~~~~~~~~~~~~~~~~~~
@@ -858,6 +1002,11 @@ Non-linear activation functions
 
 .. autofunction:: selu
 
+:hidden:`celu`
+~~~~~~~~~~~~~~
+
+.. autofunction:: celu
+
 :hidden:`leaky_relu`
 ~~~~~~~~~~~~~~~~~~~~
 
@@ -920,6 +1069,11 @@ Non-linear activation functions
 
 .. autofunction:: softshrink
 
+:hidden:`gumbel_softmax`
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autofunction:: gumbel_softmax
+
 :hidden:`log_softmax`
 ~~~~~~~~~~~~~~~~~~~~~
 
@@ -943,8 +1097,18 @@ Normalization functions
 
 .. autofunction:: batch_norm
 
-:hidden:`local_response_norm`
+:hidden:`instance_norm`
+~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autofunction:: instance_norm
+
+:hidden:`layer_norm`
 ~~~~~~~~~~~~~~~~~~~~
+
+.. autofunction:: layer_norm
+
+:hidden:`local_response_norm`
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. autofunction:: local_response_norm
 
@@ -960,6 +1124,11 @@ Linear functions
 ~~~~~~~~~~~~~~~~
 
 .. autofunction:: linear
+
+:hidden:`bilinear`
+~~~~~~~~~~~~~~~~~~
+
+.. autofunction:: bilinear
 
 Dropout functions
 -----------------
@@ -984,6 +1153,19 @@ Dropout functions
 
 .. autofunction:: dropout3d
 
+Sparse functions
+----------------------------------
+
+:hidden:`embedding`
+~~~~~~~~~~~~~~~~~~~
+
+.. autofunction:: embedding
+
+:hidden:`embedding_bag`
+~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autofunction:: embedding_bag
+
 Distance functions
 ----------------------------------
 
@@ -997,6 +1179,11 @@ Distance functions
 
 .. autofunction:: cosine_similarity
 
+:hidden:`pdist`
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autofunction:: pdist
+
 
 Loss functions
 --------------
@@ -1005,6 +1192,11 @@ Loss functions
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. autofunction:: binary_cross_entropy
+
+:hidden:`binary_cross_entropy_with_logits`
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autofunction:: binary_cross_entropy_with_logits
 
 :hidden:`poisson_nll_loss`
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1020,6 +1212,11 @@ Loss functions
 ~~~~~~~~~~~~~~~~~~~~~~~
 
 .. autofunction:: cross_entropy
+
+:hidden:`ctc_loss`
+~~~~~~~~~~~~~~~~~~
+
+.. autofunction:: ctc_loss
 
 :hidden:`hinge_embedding_loss`
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1066,11 +1263,6 @@ Loss functions
 
 .. autofunction:: nll_loss
 
-:hidden:`binary_cross_entropy_with_logits`
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. autofunction:: binary_cross_entropy_with_logits
-
 :hidden:`smooth_l1_loss`
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -1099,6 +1291,11 @@ Vision functions
 
 .. autofunction:: pad
 
+:hidden:`interpolate`
+~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autofunction:: interpolate
+
 :hidden:`upsample`
 ~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -1124,20 +1321,28 @@ Vision functions
 
 .. autofunction:: affine_grid
 
+DataParallel functions (multi-GPU, distributed)
+-----------------------------------------------
+
+:hidden:`data_parallel`
+~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autofunction:: torch.nn.parallel.data_parallel
+
 
 torch.nn.init
 =============
 
 .. currentmodule:: torch.nn.init
 .. autofunction:: calculate_gain
-.. autofunction:: uniform
-.. autofunction:: normal
-.. autofunction:: constant
-.. autofunction:: eye
-.. autofunction:: dirac
-.. autofunction:: xavier_uniform
-.. autofunction:: xavier_normal
-.. autofunction:: kaiming_uniform
-.. autofunction:: kaiming_normal
-.. autofunction:: orthogonal
-.. autofunction:: sparse
+.. autofunction:: uniform_
+.. autofunction:: normal_
+.. autofunction:: constant_
+.. autofunction:: eye_
+.. autofunction:: dirac_
+.. autofunction:: xavier_uniform_
+.. autofunction:: xavier_normal_
+.. autofunction:: kaiming_uniform_
+.. autofunction:: kaiming_normal_
+.. autofunction:: orthogonal_
+.. autofunction:: sparse_

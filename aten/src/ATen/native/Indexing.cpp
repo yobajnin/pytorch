@@ -39,7 +39,7 @@ static void invalid_mask(const Tensor & self, int64_t idx, const Tensor & mask, 
   ss << "The shape of the mask " << mask.sizes() << " at index " << maskIdx;
   ss << " does not match the shape of the indexed tensor " << self.sizes();
   ss << " at index " << idx;
-  throw std::runtime_error(ss.str());
+  AT_ERROR(ss.str());
 }
 
 static void checkIndexTensorTypes(TensorList indices) {
@@ -47,9 +47,8 @@ static void checkIndexTensorTypes(TensorList indices) {
     if (tensor.defined()) {
       auto& type = tensor.type();
       auto scalarType = type.scalarType();
-      if (scalarType != kLong && scalarType != kByte) {
-        throw std::runtime_error("tensors used as indices must be long or byte tensors");
-      }
+      AT_CHECK(scalarType == kLong || scalarType == kByte,
+               "tensors used as indices must be long or byte tensors");
     }
   }
 }
@@ -69,12 +68,12 @@ static std::vector<Tensor> expandByteTensors(const Tensor & self, TensorList ind
       }
       // Replace with nonzeros
       auto nonzero = index.nonzero();
-      auto is_empty = nonzero.numel() == 0;
+      auto special_empty = false;
       for (int64_t j = 0; j < index.dim(); j++) {
-        if (is_empty) {
+        if (special_empty) {
           // We can't call select on an empty tensor so we just create an empty
           // tensor.
-          result.emplace_back(nonzero.type().tensor());
+          result.emplace_back(at::empty({0}, nonzero.options()));
         } else {
           result.emplace_back(nonzero.select(1, j));
         }
@@ -142,8 +141,21 @@ static Tensor unsqueezeN(const Tensor & src, int64_t before, int64_t after) {
   return src.view(sizes);
 }
 
+static Tensor wrapIndexOnce(const Tensor & index, int64_t dim, int64_t dim_size) {
+  if (index.numel() != 0) {
+    auto max_idx = index.max().item<int64_t>();
+    auto min_idx = index.min().item<int64_t>();
+    AT_CHECK(max_idx < dim_size,
+             "index ", max_idx, " is out of bounds for dimension ", dim, " with size ", dim_size);
+    AT_CHECK(min_idx >= -dim_size,
+             "index ", min_idx, " is out of bounds for dimension ", dim, " with size ", dim_size);
+  }
+  return index.remainder(dim_size);
+}
+
 static Tensor computeLinearIndex(const Tensor & src, TensorList indices) {
   auto strides = computeLinearStride(src);
+  Type& longType = src.type().toScalarType(kLong);
 
   // Compute the linear index by multiplying the indexing tensors by the
   // stride and summing them. All the indexing tensors have the same shape at
@@ -153,7 +165,9 @@ static Tensor computeLinearIndex(const Tensor & src, TensorList indices) {
   int64_t emptyBefore = 0, emptyAfter = 0, nElemBefore = 1, nElemAfter = 1;
   for (int64_t i = 0; i < src.dim(); i++) {
     if (indices[i].defined()) {
-      Tensor index = indices[i] * strides[i];
+      // Cast index to the longType matching src's backend
+      // This allows us to support ie indexing a cuda tensor with a cpu tensor
+      Tensor index = (wrapIndexOnce(indices[i], i, src.size(i)) * strides[i]).toType(longType);
       if (linearIndex.defined()) {
         linearIndex += index;
       } else {
@@ -168,18 +182,16 @@ static Tensor computeLinearIndex(const Tensor & src, TensorList indices) {
     }
   }
 
-  Type& longType = src.type().toScalarType(kLong);
-
   // Compute the linear indices for the parts of the tensor not being indexed
   Tensor beforeIndex;
   if (emptyBefore > 0) {
-    auto index = longType.arange(0, nElemBefore) * strides[emptyBefore - 1];
+    auto index = at::arange(0, nElemBefore, longType) * strides[emptyBefore - 1];
     index = index.view(src.sizes().slice(0, emptyBefore));
     beforeIndex = unsqueezeN(index, 0, linearIndex.dim() + emptyAfter);
   }
   Tensor afterIndex;
   if (emptyAfter > 0) {
-    auto index = longType.arange(0, nElemAfter);
+    auto index = at::arange(0, nElemAfter, longType);
     index = index.view(src.sizes().slice(src.dim() - emptyAfter, emptyAfter));
     afterIndex = unsqueezeN(index, linearIndex.dim() + emptyBefore, 0);
   }
@@ -195,22 +207,10 @@ static Tensor computeLinearIndex(const Tensor & src, TensorList indices) {
   return linearIndex;
 }
 
-static bool hasEmptyTensor(TensorList tensors) {
-  for (auto& tensor : tensors) {
-    if (tensor.defined() && tensor.numel() == 0) {
-      return true;
-    }
-  }
-  return false;
-}
-
 static std::tuple<Tensor, Tensor> makeLinearIndex(Tensor self, TensorList orig) {
   checkIndexTensorTypes(orig);
   // first expand ByteTensor (boolean masks) into 1 or more LongTensors
   auto indices = expandByteTensors(self, orig);
-  if (hasEmptyTensor(indices)) {
-    return std::make_tuple(self, self.type().toScalarType(kLong).tensor());
-  }
   // next broadcast all index tensors together
   indices = expand_outplace(indices);
   // add missing null Tensors so that it matches self.dim()
@@ -227,26 +227,71 @@ static std::tuple<Tensor, Tensor> makeLinearIndex(Tensor self, TensorList orig) 
 }
 
 Tensor index(const Tensor & self, TensorList indices) {
-  if (indices.size() > (size_t)self.dim()) {
-    runtime_error("too many indices for tensor of dimension %d (got %d)",
-      (int)self.dim(), (int)indices.size());
-  }
+  AT_CHECK(indices.size() <= (size_t)self.dim(),
+           "too many indices for tensor of dimension ", self.dim(), " (got ", indices.size(), ")");
 
   Tensor src, linearIndex;
   std::tie(src, linearIndex) = makeLinearIndex(self, indices);
   return src.take(linearIndex);
 }
 
+Tensor index_put(const Tensor & self, TensorList indices, const Tensor & value) {
+  AT_CHECK(indices.size() <= (size_t)self.dim(),
+           "too many indices for tensor of dimension ", self.dim(), " (got ", indices.size(), ")");
+
+  Tensor src, linearIndex, expandedValue;
+  std::tie(src, linearIndex) = makeLinearIndex(self, indices);
+  std::tie(expandedValue) = expand_inplace(linearIndex, value);
+  Tensor dst = src.clone();
+  return dst.put_(linearIndex, expandedValue);
+}
+
 Tensor & index_put_(Tensor & self, TensorList indices, const Tensor & value) {
-  if (indices.size() > (size_t)self.dim()) {
-    runtime_error("too many indices for tensor of dimension %d (got %d)",
-      (int)self.dim(), (int)indices.size());
-  }
+  AT_CHECK(indices.size() <= (size_t)self.dim(),
+           "too many indices for tensor of dimension ", self.dim(), " (got ", indices.size(), ")");
 
   Tensor src, linearIndex, expandedValue;
   std::tie(src, linearIndex) = makeLinearIndex(self, indices);
   std::tie(expandedValue) = expand_inplace(linearIndex, value);
   return src.put_(linearIndex, expandedValue);
+}
+
+Tensor & index_copy_(Tensor & self, int64_t dim, const Tensor & index, const Tensor & source) {
+  dim = maybe_wrap_dim(dim, self.dim());
+
+  AT_CHECK(index.dim() < 2,
+           "index_copy_(): Index should have dimension 1 or 0 (got ", index.dim(), ")");
+
+  int64_t numIndices = index.numel();
+  AT_CHECK(source.dim() != 0 || numIndices == 1,
+           "index_copy_(): When source is scalar, index should have one element (got ", numIndices, ")");
+  AT_CHECK(index.type().scalarType() == ScalarType::Long,
+           "index_copy_(): Expected LongTensor for index");
+
+  // Check that source and destination slices have the same size
+  auto selfSlicedSizes = self.sizes().vec();
+  if (selfSlicedSizes.size() > 0) {
+    selfSlicedSizes.erase(selfSlicedSizes.begin() + dim);
+  }
+  auto sourceSlicedSizes = source.sizes().vec();
+  if (sourceSlicedSizes.size() > 0) {
+    sourceSlicedSizes.erase(sourceSlicedSizes.begin() + dim);
+  }
+  if (selfSlicedSizes.size() != sourceSlicedSizes.size() ||
+      !std::equal(selfSlicedSizes.begin(), selfSlicedSizes.end(),
+                  sourceSlicedSizes.begin())) {
+    std::stringstream ss;
+    ss << "index_copy_(): Source/destination tensor must have same slice shapes. ";
+    ss << "Destination slice shape: " << selfSlicedSizes << " at dimension " << dim;
+    ss << " and source slice shape: " << sourceSlicedSizes << " at dimension 0.";
+    AT_ERROR(ss.str());
+  }
+  if (source.dim() > 0 && numIndices != source.size(dim)) {
+     AT_ERROR(
+          "index_copy_(): Number of indices (", numIndices, ") should be equal to source.size(dim) (", source.size(dim), ")");
+  }
+
+  return at::_th_index_copy_(self, dim, index, source);
 }
 
 }} // at::native

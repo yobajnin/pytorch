@@ -30,8 +30,7 @@ def set_declaration_defaults(declaration):
     if 'backends' not in declaration:
         declaration['backends'] = ['CPU', 'CUDA']
     if 'api_name' not in declaration:
-        declaration['api_name'] = (declaration['python_name']
-                                   if 'python_name' in declaration else declaration['name'])
+        declaration['api_name'] = declaration['name']
     # Simulate multiple dispatch, even if it's not necessary
     if 'options' not in declaration:
         declaration['options'] = [{'arguments': declaration['arguments']}]
@@ -185,6 +184,13 @@ def parse_header(path):
     for l, c in lines:
         if l.startswith('TH_API void THNN_'):
             fn_name = l.lstrip('TH_API void THNN_')
+            if fn_name[0] == '(' and fn_name[-2] == ')':
+                fn_name = fn_name[1:-2]
+            else:
+                fn_name = fn_name[:-1]
+            generic_functions.append(Function(fn_name))
+        elif l.startswith('THC_API void THNN_'):
+            fn_name = l.lstrip('THC_API void THNN_')
             if fn_name[0] == '(' and fn_name[-2] == ')':
                 fn_name = fn_name[1:-2]
             else:

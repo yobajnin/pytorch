@@ -1,5 +1,5 @@
 #include "THCUNN.h"
-#include "THCHalf.h"
+#include "TH/THHalf.h"
 #include "THCHalfAutoNumerics.cuh"
 #include <THC/THCApply.cuh>
 
@@ -8,7 +8,7 @@ struct absupdateOutput_functor
 {
   __device__ void operator()(T* output, const T* input) const
   {
-    *output = abs(*input);
+    *output = THCNumerics<T>::abs(*input);
   }
 };
 

@@ -1,6 +1,7 @@
 from numbers import Number
 import torch
 import math
+from torch._six import nan
 from torch.distributions import constraints
 from torch.distributions.distribution import Distribution
 from torch.distributions.gamma import Gamma
@@ -9,24 +10,23 @@ from torch.distributions.utils import broadcast_all, _finfo
 
 class FisherSnedecor(Distribution):
     r"""
-    Creates a Fisher-Snedecor distribution parameterized by `df1` and `df2`.
+    Creates a Fisher-Snedecor distribution parameterized by :attr:`df1` and :attr:`df2`.
 
     Example::
 
-        >>> m = FisherSnedecor(torch.Tensor([1.0]), torch.Tensor([2.0]))
+        >>> m = FisherSnedecor(torch.tensor([1.0]), torch.tensor([2.0]))
         >>> m.sample()  # Fisher-Snedecor-distributed with df1=1 and df2=2
-         0.2453
-        [torch.FloatTensor of size 1]
+        tensor([ 0.2453])
 
     Args:
-        df1 (float or Tensor or Variable): degrees of freedom parameter 1
-        df2 (float or Tensor or Variable): degrees of freedom parameter 2
+        df1 (float or Tensor): degrees of freedom parameter 1
+        df2 (float or Tensor): degrees of freedom parameter 2
     """
-    params = {'df1': constraints.positive, 'df2': constraints.positive}
+    arg_constraints = {'df1': constraints.positive, 'df2': constraints.positive}
     support = constraints.positive
     has_rsample = True
 
-    def __init__(self, df1, df2):
+    def __init__(self, df1, df2, validate_args=None):
         self.df1, self.df2 = broadcast_all(df1, df2)
         self._gamma1 = Gamma(self.df1 * 0.5, self.df1)
         self._gamma2 = Gamma(self.df2 * 0.5, self.df2)
@@ -35,18 +35,29 @@ class FisherSnedecor(Distribution):
             batch_shape = torch.Size()
         else:
             batch_shape = self.df1.size()
-        super(FisherSnedecor, self).__init__(batch_shape)
+        super(FisherSnedecor, self).__init__(batch_shape, validate_args=validate_args)
+
+    def expand(self, batch_shape, _instance=None):
+        new = self._get_checked_instance(FisherSnedecor, _instance)
+        batch_shape = torch.Size(batch_shape)
+        new.df1 = self.df1.expand(batch_shape)
+        new.df2 = self.df2.expand(batch_shape)
+        new._gamma1 = self._gamma1.expand(batch_shape)
+        new._gamma2 = self._gamma2.expand(batch_shape)
+        super(FisherSnedecor, new).__init__(batch_shape, validate_args=False)
+        new._validate_args = self._validate_args
+        return new
 
     @property
     def mean(self):
         df2 = self.df2.clone()
-        df2[df2 <= 2] = float('nan')
+        df2[df2 <= 2] = nan
         return df2 / (df2 - 2)
 
     @property
     def variance(self):
         df2 = self.df2.clone()
-        df2[df2 <= 4] = float('nan')
+        df2[df2 <= 4] = nan
         return 2 * df2.pow(2) * (self.df1 + df2 - 2) / (self.df1 * (df2 - 2).pow(2) * (df2 - 4))
 
     def rsample(self, sample_shape=torch.Size(())):
@@ -61,7 +72,8 @@ class FisherSnedecor(Distribution):
         return Y
 
     def log_prob(self, value):
-        self._validate_log_prob_arg(value)
+        if self._validate_args:
+            self._validate_sample(value)
         ct1 = self.df1 * 0.5
         ct2 = self.df2 * 0.5
         ct3 = self.df1 / self.df2

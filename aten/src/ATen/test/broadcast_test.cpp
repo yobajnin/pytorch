@@ -1,142 +1,192 @@
+
+#include "gtest/gtest.h"
+
 #include "ATen/ATen.h"
-#include "test_assert.h"
+#include "test_seed.h"
 
 using namespace at;
 
-int main() {
-  Type & T = CPU(kFloat);
+// can't expand empty tensor
+void TestEmptyTensor(Type& T) {
+  auto empty = randn({0}, T);
+  ASSERT_ANY_THROW(empty.expand({3}));
+}
 
-  // 0) pre-req tests:
-  // can't expand empty tensor
-  {
-    auto empty = T.randn({0});
-    ASSERT_THROWS(empty.expand({3}));
-  }
+// out-place function with 2 args
+void TestOut2Basic(Type& T) {
+  auto a = randn({3, 1}, T);
+  auto b = randn({5}, T);
+  std::vector<int64_t> expanded_sizes = {3, 5};
+  ASSERT_TRUE(
+      (a + b).equal(a.expand(expanded_sizes) + b.expand(expanded_sizes)));
+}
 
-  // 1) out-place function with 2 args
-  {
-    // basic
-    auto a = T.randn({3, 1});
-    auto b = T.randn({5});
-    std::vector<int64_t> expanded_sizes = {3, 5};
-    ASSERT((a + b).equal(a.expand(expanded_sizes) + b.expand(expanded_sizes)));
+// with scalar
+void TestOut2WithScalar(Type& T) {
+  auto aScalar = ones({1}, T);
+  aScalar.unsafeGetTensorImpl()->maybe_zero_dim(true);
+  auto b = randn({3, 5}, T);
+  ASSERT_TRUE(
+      (aScalar + b).equal(aScalar.expand(b.sizes()) + b.expand(b.sizes())));
+}
 
-    // with scalar
-    auto aScalar = T.ones({1});
-    aScalar.get()->maybeScalar(true);
-    b = T.randn({3, 5});
-    ASSERT((aScalar + b).equal(aScalar.expand(b.sizes()) + b.expand(b.sizes())));
+// old fallback behavior yields error
+void TestOut2OldFallback(Type& T) {
+  auto a = randn({3, 5}, T);
+  auto b = randn({5, 3}, T);
+  ASSERT_ANY_THROW(a + b);
+}
 
-    // old fallback behavior yields error
-    {
-      auto a = T.randn({3, 5});
-      auto b = T.randn({5, 3});
-      ASSERT_THROWS(a + b);
-    }
+// with mismatched sizes
+void TestOut2MismatchedSizes(Type& T) {
+  auto a = randn({3, 5}, T);
+  auto b = randn({7, 5}, T);
+  ASSERT_ANY_THROW(a + b);
+}
 
-    // with mismatched sizes
-    {
-      auto a = T.randn({3, 5});
-      auto b = T.randn({7, 5});
-      ASSERT_THROWS(a + b);
-    }
-  }
+// out-place function with 3 args
+void TestOut3Basic(Type& T) {
+  auto a = randn({3, 1, 1}, T);
+  auto b = randn({1, 2, 1}, T);
+  auto c = randn({1, 1, 5}, T);
+  std::vector<int64_t> expanded_sizes = {3, 2, 5};
+  ASSERT_TRUE((a + b + c).equal(
+      a.expand(expanded_sizes) + b.expand(expanded_sizes) +
+      c.expand(expanded_sizes)));
+}
 
-  // 2) out-place function with 3 args
-  {
-    // basic
-    auto a = T.randn({3, 1, 1});
-    auto b = T.randn({1, 2, 1});
-    auto c = T.randn({1, 1, 5});
-    std::vector<int64_t> expanded_sizes = {3, 2, 5};
-    ASSERT((a + b + c).equal(a.expand(expanded_sizes) + b.expand(expanded_sizes) + c.expand(expanded_sizes)));
+// with scalar
+void TestOut3WithScalar(Type& T) {
+  auto aTensorScalar = ones({1}, T);
+  aTensorScalar.unsafeGetTensorImpl()->maybe_zero_dim(true);
+  auto b = randn({3, 2, 1}, T);
+  auto c = randn({1, 2, 5}, T);
+  std::vector<int64_t> expanded_sizes = {3, 2, 5};
+  ASSERT_TRUE(aTensorScalar.addcmul(b, c).equal(
+      aTensorScalar.expand(expanded_sizes)
+          .addcmul(b.expand(expanded_sizes), c.expand(expanded_sizes))));
+}
 
-    // with scalar
-    auto aTensorScalar = T.ones({1});
-    aTensorScalar.get()->maybeScalar(true);
-    b = T.randn({3, 2, 1});
-    c = T.randn({1, 2, 5});
-    ASSERT(aTensorScalar.addcmul(b, c).equal(
-           aTensorScalar.expand(expanded_sizes).addcmul(b.expand(expanded_sizes), c.expand(expanded_sizes))));
+// old fallback behavior yields error
+void TestOut3OldFallback(Type& T) {
+  auto a = randn({3, 2, 5}, T);
+  auto b = randn({2, 3, 5}, T);
+  auto c = randn({5, 3, 2}, T);
+  ASSERT_ANY_THROW(a.addcmul(b, c));
+}
 
-    // old fallback behavior yields error
-    {
-      auto a = T.randn({3, 2, 5});
-      auto b = T.randn({2, 3, 5});
-      auto c = T.randn({5, 3, 2});
-      ASSERT_THROWS(a.addcmul(b, c));
-    }
+// with mismatched sizes
+void TestOut3MismatchedSizes(Type& T) {
+  auto a = randn({3, 2, 5}, T);
+  auto b = randn({2, 3, 5}, T);
+  auto c = randn({5, 5, 5}, T);
+  ASSERT_ANY_THROW(a.addcmul(b, c));
+}
 
-    // with mismatched sizes
-    {
-      auto c = T.randn({5, 5, 5});
-      ASSERT_THROWS(a.addcmul(b, c));
-    }
-  }
+// in-place function with 2 args
+void TestIn2Basic(Type& T) {
+  auto a = randn({3, 5}, T);
+  auto b = randn({3, 1}, T);
+  ASSERT_TRUE((a + b).equal(a + b.expand({3, 5})));
+}
 
-  // 3) in-place function with 2 args
-  {
-    // basic
-    auto a = T.randn({3, 5});
-    auto b = T.randn({3, 1});
-    ASSERT((a + b).equal(a + b.expand({3, 5})));
+// with scalar
+void TestIn2WithScalar(Type& T) {
+  auto a = randn({3, 5}, T);
+  auto bScalar = ones({1}, T);
+  bScalar.unsafeGetTensorImpl()->maybe_zero_dim(true);
+  ASSERT_TRUE((a + bScalar).equal(a + bScalar.expand(a.sizes())));
+}
 
-    // with scalar
-    auto bScalar = T.ones({1});
-    bScalar.get()->maybeScalar(true);
-    ASSERT((a + bScalar).equal(a + bScalar.expand(a.sizes())));
+// error: would have to expand inplace arg
+void TestIn2ExpandError(Type& T) {
+  auto a = randn({1, 5}, T);
+  auto b = randn({3, 1}, T);
+  ASSERT_ANY_THROW(a.add_(b));
+}
 
-    // error: would have to expand inplace arg
-    {
-      auto a = T.randn({1, 5});
-      auto b = T.randn({3, 1});
-      ASSERT_THROWS(a.add_(b));
-    }
-  }
+// in-place function with 3 args
+void TestIn3Basic(Type& T) {
+  auto a = randn({3, 5, 2}, T);
+  auto b = randn({3, 1, 2}, T);
+  auto c = randn({1, 5, 1}, T);
+  auto aClone = a.clone();
+  ASSERT_TRUE(a.addcmul_(b, c).equal(
+      aClone.addcmul_(b.expand(a.sizes()), c.expand(a.sizes()))));
+}
 
-  // 4) in-place function with 3 args
-  {
-    // basic
-    auto a = T.randn({3, 5, 2});
-    auto aClone = a.clone();
-    auto b = T.randn({3, 1, 2});
-    auto c = T.randn({1, 5, 1});
+// with scalar
+void TestIn3WithScalar(Type& T) {
+  auto a = randn({3, 5, 2}, T);
+  auto b = randn({3, 1, 2}, T);
+  auto c = randn({1, 5, 1}, T);
+  auto aClone = a.clone();
+  auto bScalar = ones({1}, T);
+  bScalar.unsafeGetTensorImpl()->maybe_zero_dim(true);
+  ASSERT_TRUE(a.addcmul_(bScalar, c)
+                  .equal(aClone.addcmul_(
+                      bScalar.expand(a.sizes()), c.expand(a.sizes()))));
+}
 
-    ASSERT(a.addcmul_(b, c).equal(aClone.addcmul_(b.expand(a.sizes()), c.expand(a.sizes()))));
+// error: would have to expand inplace arg
+void TestIn3ExpandError(Type& T) {
+  auto a = randn({1, 3, 5}, T);
+  auto b = randn({4, 1, 1}, T);
+  auto c = randn({1, 3, 1}, T);
+  ASSERT_ANY_THROW(a.addcmul_(b, c));
+}
 
-    // with scalar
-    auto bScalar = T.ones({1});
-    bScalar.get()->maybeScalar(true);
-    ASSERT(a.addcmul_(bScalar, c).equal(aClone.addcmul_(bScalar.expand(a.sizes()), c.expand(a.sizes()))));
+// explicit dim specification
+void TestExplicitDimBasic(Type& T) {
+  auto a = randn({1}, T);
+  auto b = randn({5, 3}, T);
+  auto c = randn({3, 7}, T);
+  ASSERT_TRUE(a.addmm(b, c).equal(a.expand({5, 7}).addmm(b, c)));
+}
 
-    // error: would have to expand inplace arg
-    {
-      auto a = T.randn({1, 3, 5});
-      auto b = T.randn({4, 1, 1});
-      auto c = T.randn({1, 3, 1});
-      ASSERT_THROWS(a.addcmul_(b, c));
-    }
-  }
+// with scalar
+void TestExplicitDimWithScalar(Type& T) {
+  auto a = randn({1}, T);
+  auto b = randn({5, 3}, T);
+  auto c = randn({3, 7}, T);
+  Tensor aScalar = ones({1}, T);
+  aScalar.unsafeGetTensorImpl()->maybe_zero_dim(true);
+  ASSERT_TRUE(aScalar.addmm(b, c).equal(aScalar.expand({5, 7}).addmm(b, c)));
+}
 
-  // explicit dim specification
-  {
-    // basic
-    auto a = T.randn({1});
-    auto b = T.randn({5, 3});
-    auto c = T.randn({3, 7});
-    ASSERT(a.addmm(b, c).equal(a.expand({5,7}).addmm(b, c)));
+// with mismatched sizes
+void TestExplicitDimWithMismatchedSizes(Type& T) {
+  auto b = randn({5, 3}, T);
+  auto c = randn({3, 7}, T);
+  auto a = randn({3, 3}, T);
+  ASSERT_ANY_THROW(a.addmm(b, c));
+}
 
-    // with scalar
-    Tensor aScalar = T.ones({1});
-    aScalar.get()->maybeScalar(true);
-    ASSERT(aScalar.addmm(b, c).equal(aScalar.expand({5, 7}).addmm(b, c)));
+TEST(BroadcastTest, Broadcast) {
+  manual_seed(123, at::kCPU);
+  Type& T = CPU(kFloat);
 
-    // with mismatched sizes
-    {
-      auto a = T.randn({3, 3});
-      ASSERT_THROWS(a.addmm(b, c));
-    }
-  }
+  TestEmptyTensor(T);
 
-  return 0;
+  TestOut2Basic(T);
+  TestOut2WithScalar(T);
+  TestOut2OldFallback(T);
+  TestOut2MismatchedSizes(T);
+
+  TestOut3Basic(T);
+  TestOut3WithScalar(T);
+  TestOut3OldFallback(T);
+  TestOut3MismatchedSizes(T);
+
+  TestIn2Basic(T);
+  TestIn2WithScalar(T);
+  TestIn2ExpandError(T);
+
+  TestIn3Basic(T);
+  TestIn3WithScalar(T);
+  TestIn3ExpandError(T);
+
+  TestExplicitDimBasic(T);
+  TestExplicitDimWithScalar(T);
+  TestExplicitDimWithMismatchedSizes(T);
 }

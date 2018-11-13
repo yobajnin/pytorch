@@ -1,5 +1,6 @@
-#include "THGeneral.h"
+#include <TH/THGeneral.h>
 #include "THRandom.h"
+#include "THGenerator.hpp"
 
 #ifndef _WIN32
 #include <fcntl.h>
@@ -66,7 +67,7 @@ static uint64_t readURandomLong()
     THError("Unable to open /dev/urandom");
   }
   ssize_t readBytes = read(randDev, &randValue, sizeof(randValue));
-  if (readBytes < sizeof(randValue)) {
+  if (readBytes < (ssize_t) sizeof(randValue)) {
     THError("Unable to read from /dev/urandom");
   }
   close(randDev);
@@ -227,14 +228,14 @@ static uint32_t FLOAT_MASK = (1 << 24) - 1;
 static float FLOAT_DIVISOR = 1.0f / (1 << 24);
 
 /* generates a random number on [0,1)-double-interval */
-static double uniform_double(THGenerator *_generator)
+static inline double uniform_double(THGenerator *_generator)
 {
   uint64_t x = THRandom_random64(_generator);
   return (x & DOUBLE_MASK) * DOUBLE_DIVISOR;
 }
 
 /* generates a random number on [0,1)-double-interval */
-static float uniform_float(THGenerator *_generator)
+static inline float uniform_float(THGenerator *_generator)
 {
   uint32_t x = (uint32_t)THRandom_random(_generator);
   return (x & FLOAT_MASK) * FLOAT_DIVISOR;
@@ -289,35 +290,6 @@ double THRandom_exponential(THGenerator *_generator, double lambda)
   return(-1. / lambda * log(1-uniform_double(_generator)));
 }
 
-double THRandom_standard_gamma(THGenerator *_generator, double alpha) {
-  double scale = 1.0;
-
-  // Boost alpha for higher acceptance probability.
-  if(alpha < 1.0) {
-    scale *= pow(1 - uniform_double(_generator), 1.0 / alpha);
-    alpha += 1.0;
-  }
-
-  // This implements the acceptance-rejection method of Marsaglia and Tsang (2000)
-  // doi:10.1145/358407.358414
-  const double d = alpha - 1.0 / 3.0;
-  const double c = 1.0 / sqrt(9.0 * d);
-  for(;;) {
-    double x, y;
-    do {
-      x = THRandom_normal(_generator, 0.0, 1.0);
-      y = 1.0 + c * x;
-    } while(y <= 0);
-    const double v = y * y * y;
-    const double u = 1 - uniform_double(_generator);
-    const double xx = x * x;
-    if(u < 1.0 - 0.0331 * xx * xx)
-      return scale * d * v;
-    if(log(u) < 0.5 * xx + d * (1.0 - v + log(v)))
-      return scale * d * v;
-  }
-}
-
 double THRandom_cauchy(THGenerator *_generator, double median, double sigma)
 {
   return(median + sigma * tan(M_PI*(uniform_double(_generator)-0.5)));
@@ -341,4 +313,10 @@ int THRandom_bernoulli(THGenerator *_generator, double p)
 {
   THArgCheck(p >= 0 && p <= 1, 1, "must be >= 0 and <= 1");
   return(uniform_double(_generator) <= p);
+}
+
+int THRandom_bernoulliFloat(THGenerator *_generator, float p)
+{
+  THArgCheck(p >= 0 && p <= 1, 1, "must be >= 0 and <= 1");
+  return(uniform_float(_generator) <= p);
 }

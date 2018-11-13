@@ -1,5 +1,5 @@
 #include "THCUNN.h"
-#include "THCHalf.h"
+#include "TH/THHalf.h"
 #include "THCHalfAutoNumerics.cuh"
 #include "THCAtomics.cuh"
 #include "common.h"
@@ -103,9 +103,8 @@ __global__ void cunn_SpatialClassNLLCriterion_updateOutput_kernel(
     }
   }
 
-  __syncthreads();
-
   input_sum = reduceBlock(partial_sums, blockDim.x, input_sum, thrust::plus<AccumT>(), AccumT(0));
+  __syncthreads();
   acc_weight = reduceBlock(partial_sums, blockDim.x, acc_weight, thrust::plus<AccumT>(), AccumT(0));
 
   if (threadIdx.x == 0) {

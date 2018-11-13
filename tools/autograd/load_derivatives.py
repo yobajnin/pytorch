@@ -29,7 +29,8 @@ def load_derivatives(path, declarations):
 
 
 # How do you feel about pasting declaration inside autograd function...
-def create_autograd_function(name, derivatives, args_with_gradients, signature, declaration):
+def create_autograd_function(name, derivatives, args_with_gradients, signature,
+                             declaration, output_differentiability):
     op = to_camel_case(name) + 'Backward'
     op = op.replace('ForwardBackward', 'Backward')
     return {
@@ -41,6 +42,7 @@ def create_autograd_function(name, derivatives, args_with_gradients, signature, 
         'derivatives': derivatives,
         'saved_inputs': all_saved_variables(derivatives, 'saved_inputs'),
         'saved_outputs': all_saved_variables(derivatives, 'saved_outputs'),
+        'output_differentiability': output_differentiability,
     }
 
 
@@ -127,26 +129,6 @@ def process_definition(defn, declarations_by_signature):
                                "otherwise, there is a likely error in your derivatives "
                                "declaration.".format(defn_name))
 
-        # DO NOT comment out this test!  Code generation will probably work with
-        # this test commented out, but if you ever pass a non-differentiable
-        # argument to an autograd function (e.g., a backwards function which
-        # has double backwards implemented, as was the case in #4422) your code
-        # will fail when you ever actually try to differentiate with it.
-        #
-        # NB: I had to make it not complain if both 'grads' and 'grad' are never
-        # used, because we have some silly zeros_like() gradients for inplace
-        # comparison tests.
-        if fully_implemented and not used_grad and used_grads and only_used_grads_indices and \
-           set(used_grads_indices) != set(range(len(declaration['returns']))):
-            raise RuntimeError("Derivative definition of {} in derivatives.yaml does "
-                               "not refer to the gradients of all of its outputs.  Either "
-                               "the derivatives declaration is wrong, OR you have some "
-                               "non-differentiable outputs.  If you have a single "
-                               "differentiable output, make it the first output in ATen "
-                               "and reference its gradient with 'grad'; otherwise, you "
-                               "have hit a case which is unsupported by the codegen, "
-                               "see #4567.".format(defn_name))
-
     def set_up_derivatives(defn_name, defn, declaration):
         # Determine the set of inputs which have gradients
         args_with_gradients_set = set()
@@ -177,7 +159,11 @@ def process_definition(defn, declarations_by_signature):
 
     # NB: Removes 'name' from defn dictionary
     defn_name, params = split_name_params(defn.pop('name'))
+    # NB: Removes 'output_differentiability' from defn dictionary
+    #     `None` means all differentiable.
+    output_differentiability = defn.pop('output_differentiability', None)
     param_types, param_names = unzip([p.split(' ') for p in params if p != '*'])
+
     if 'grad_input_mask' in param_names:
         raise RuntimeError("Signature for {} has an argument named grad_input_mask, "
                            "but this name would be shadowed by our codegen. "
@@ -210,7 +196,8 @@ def process_definition(defn, declarations_by_signature):
                                .format(i, defn_name, x, y))
 
     derivatives, args_with_gradients = set_up_derivatives(defn_name, defn, canonical)
-    return create_autograd_function(defn_name, derivatives, args_with_gradients, signature, canonical)
+    return create_autograd_function(defn_name, derivatives, args_with_gradients,
+                                    signature, canonical, output_differentiability)
 
 
 def ensure_unique_names(autograd_functions):
@@ -278,10 +265,15 @@ def saved_variables(formula, args):
             'suffix': lambda m: '_argsize_{}'.format(*m.groups()),
             'type': 'int64_t',
         }),
-        # replace to_arg_sizes(self, 2) with self_argsizes_2
-        (r'to_arg_sizes\({}, (\w+)\)', {
-            'suffix': lambda m: '_sizes_{}'.format(*m.groups()),
-            'type': 'IntList',
+        # replace self.numel() with self_numel
+        (r'{}.numel\(\)', {
+            'suffix': '_numel',
+            'type': 'int64_t',
+        }),
+        # replace to_args_sizes(self) with self_args_sizes
+        (r'to_args_sizes\({}\)', {
+            'suffix': '_args_sizes',
+            'type': 'std::vector<std::vector<int64_t>>',
         }),
         # replace TensorGeometry(self) with self_geometry
         (r'TensorGeometry\({}\)', {
